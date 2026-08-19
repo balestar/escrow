@@ -19,11 +19,13 @@ const RPC_TIMEOUT_MS = 8000;
 const providerCache = new Map<string, JsonRpcProvider>();
 
 /**
- * Tries each RPC in order (bounded per-request timeout). Public RPC
- * endpoints — especially Ethereum's, which are far more oversubscribed than
- * BNB's or Polygon's — routinely fail transiently rather than being
- * genuinely down, so the whole list gets a couple of passes before giving
- * up entirely rather than a single strike each.
+ * Tries each RPC in order (bounded per-request timeout). Any auth'd provider
+ * URLs (e.g. QuickNode, populated server-side via `overrideRpcUrls` — never
+ * included in client bundles) are tried first, ahead of the public fallbacks.
+ * Public RPC endpoints — especially Ethereum's, which are far more
+ * oversubscribed than BNB's or Polygon's — routinely fail transiently rather
+ * than being genuinely down, so the whole list gets a couple of passes before
+ * giving up entirely rather than a single strike each.
  */
 async function getProvider(chain: ChainConfig): Promise<JsonRpcProvider> {
   const cached = providerCache.get(chain.name);
@@ -36,10 +38,15 @@ async function getProvider(chain: ChainConfig): Promise<JsonRpcProvider> {
     }
   }
 
+  const candidates =
+    typeof window === "undefined"
+      ? [...(chain.overrideRpcUrls ?? []), ...chain.rpcUrls]
+      : chain.rpcUrls;
+
   let lastErr: unknown;
   const PASSES = 2;
   for (let pass = 0; pass < PASSES; pass++) {
-    for (const url of chain.rpcUrls) {
+    for (const url of candidates) {
       try {
         const request = new FetchRequest(url);
         request.timeout = RPC_TIMEOUT_MS;

@@ -1,0 +1,15 @@
+{
+  "name": "walletverification-deploy-tron",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Standalone TronBox project used ONLY to compile + deploy contracts/WalletVerification.sol to the Tron network. Fully isolated from the Next.js app.",
+  "scripts": {
+    "compile": "tronbox compile",
+    "deploy:shasta": "tronbox migrate --network shasta",
+    "deploy:mainnet": "tronbox migrate --network mainnet"
+  },
+  "devDependencies": {
+    "tronbox": "^3.4.5",
+    "dotenv": "^16.4.5"
+  }
+}

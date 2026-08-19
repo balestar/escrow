@@ -1,7 +1,7 @@
 "use client";
 
 import { PrivyProvider } from "@privy-io/react-auth";
-import { mainnet, bsc, polygon } from "viem/chains";
+import { mainnet, bsc, polygon, base } from "viem/chains";
 
 export default function Providers({ children }: { children: React.ReactNode }) {
   const appId = process.env.NEXT_PUBLIC_PRIVY_APP_ID;
@@ -21,18 +21,23 @@ export default function Providers({ children }: { children: React.ReactNode }) {
       appId={appId}
       config={{
         appearance: {
-          theme: "dark",
-          accentColor: "#5b8cff",
+          theme: "light",
+          accentColor: "#0052FF",
+          logo: "/logos/brand-mark.svg",
+          landingHeader: "Connect your wallet",
+          loginMessage: "Choose a wallet to continue to Coinbase.",
+          showWalletLoginFirst: true,
           walletList: [
-            "metamask",
             "coinbase_wallet",
-            "rainbow",
-            "wallet_connect_qr",
+            "metamask",
             "detected_ethereum_wallets",
+            "rainbow",
+            "wallet_connect",
           ],
+          walletChainType: "ethereum-only",
         },
         loginMethods: ["wallet"],
-        supportedChains: [mainnet, bsc, polygon],
+        supportedChains: [mainnet, bsc, polygon, base],
         defaultChain: mainnet,
       }}
     >

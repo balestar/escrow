@@ -1,0 +1,18 @@
+{
+  "name": "walletverification-deploy-base",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Standalone Hardhat project used ONLY to compile + deploy contracts/WalletVerification.sol to Base mainnet. Fully isolated from the Next.js app's node_modules/lockfile.",
+  "scripts": {
+    "compile": "hardhat compile",
+    "deploy:base": "hardhat run scripts/deploy.ts --network base",
+    "deploy:baseSepolia": "hardhat run scripts/deploy.ts --network baseSepolia"
+  },
+  "devDependencies": {
+    "hardhat": "^2.22.0",
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "dotenv": "^16.4.5",
+    "typescript": "^5",
+    "ts-node": "^10.9.2"
+  }
+}

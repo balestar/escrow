@@ -2,11 +2,15 @@
 @tailwind components;
 @tailwind utilities;
 
-@layer base {
-  * {
-    @apply border-coinbase-border;
+@keyframes marquee {
+  from {
+    transform: translateX(0);
   }
-  body {
-    @apply text-coinbase-text;
+  to {
+    transform: translateX(-50%);
   }
+}
+
+.animate-marquee {
+  animation: marquee 28s linear infinite;
 }
