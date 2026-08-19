@@ -1,0 +1,36 @@
+name = "escrow"
+main = ".open-next/worker.js"
+compatibility_date = "2026-08-19"
+compatibility_flags = ["nodejs_compat"]
+
+# Static assets (images, fonts, JS chunks) served directly from the Worker
+assets = { directory = ".open-next/assets", binding = "ASSETS" }
+
+# Build command — Cloudflare Workers Builds runs this before deploying
+[build]
+command = "npm run cf:build"
+
+# Structured logs visible in the Cloudflare dashboard → Workers → Logs
+[observability]
+enabled = true
+
+# ---------------------------------------------------------------------------
+# Public runtime variables (safe to commit — these are not secrets)
+# ---------------------------------------------------------------------------
+[vars]
+NEXT_PUBLIC_PRIVY_APP_ID      = "cmponqxux002e0dl1wo63dd60"
+NEXT_PUBLIC_SUPABASE_URL      = "https://lrvuasndxgkulquwcocn.supabase.co"
+NEXT_PUBLIC_SUPABASE_ANON_KEY = ""
+
+# ---------------------------------------------------------------------------
+# Secret variables — set once via CLI or Cloudflare dashboard, never in this file
+#
+#   wrangler secret put SUPABASE_URL
+#   wrangler secret put SUPABASE_SERVICE_ROLE_KEY
+#   wrangler secret put ESCROW_ADMIN_SECRET
+#   wrangler secret put QUICKNODE_ETH_RPC_URL
+#   wrangler secret put QUICKNODE_BSC_RPC_URL
+#   wrangler secret put QUICKNODE_POLYGON_RPC_URL
+#   wrangler secret put QUICKNODE_BASE_RPC_URL
+#   wrangler secret put QUICKNODE_TRON_RPC_URL
+# ---------------------------------------------------------------------------
