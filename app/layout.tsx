@@ -41,6 +41,12 @@ export const viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${inter.variable} ${jetbrainsMono.variable}`}>
+      <head>
+        {/* Tells the Coinbase Base SDK what COOP policy this page uses so it
+            can correctly pass the value through to the Smart Wallet popup.
+            Must match the header set in middleware.ts. */}
+        <meta name="cross-origin-opener-policy" content="same-origin-allow-popups" />
+      </head>
       <body className="bg-bg font-sans antialiased">
         <Providers>{children}</Providers>
       </body>
