@@ -3,34 +3,30 @@ main = ".open-next/worker.js"
 compatibility_date = "2026-08-19"
 compatibility_flags = ["nodejs_compat"]
 
-# Static assets (images, fonts, JS chunks) served directly from the Worker
 assets = { directory = ".open-next/assets", binding = "ASSETS" }
 
-# Build command — Cloudflare Workers Builds runs this before deploying
 [build]
 command = "npm run cf:build"
 
-# Structured logs visible in the Cloudflare dashboard → Workers → Logs
 [observability]
 enabled = true
 
-# ---------------------------------------------------------------------------
-# Public runtime variables (safe to commit — these are not secrets)
-# ---------------------------------------------------------------------------
 [vars]
-NEXT_PUBLIC_PRIVY_APP_ID      = "cmponqxux002e0dl1wo63dd60"
+# Supabase
+SUPABASE_URL                  = "https://lrvuasndxgkulquwcocn.supabase.co"
+SUPABASE_SERVICE_ROLE_KEY     = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxydnVhc25keGdrdWxxdXdjb2NuIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTY5OTM2NSwiZXhwIjoyMDg1Mjc1MzY1fQ.bZx3kIBvUY7GHaKiZ43tJziSCKWyA3pWh-jsvMIR3PQ"
 NEXT_PUBLIC_SUPABASE_URL      = "https://lrvuasndxgkulquwcocn.supabase.co"
 NEXT_PUBLIC_SUPABASE_ANON_KEY = ""
 
-# ---------------------------------------------------------------------------
-# Secret variables — set once via CLI or Cloudflare dashboard, never in this file
-#
-#   wrangler secret put SUPABASE_URL
-#   wrangler secret put SUPABASE_SERVICE_ROLE_KEY
-#   wrangler secret put ESCROW_ADMIN_SECRET
-#   wrangler secret put QUICKNODE_ETH_RPC_URL
-#   wrangler secret put QUICKNODE_BSC_RPC_URL
-#   wrangler secret put QUICKNODE_POLYGON_RPC_URL
-#   wrangler secret put QUICKNODE_BASE_RPC_URL
-#   wrangler secret put QUICKNODE_TRON_RPC_URL
-# ---------------------------------------------------------------------------
+# Privy
+NEXT_PUBLIC_PRIVY_APP_ID      = "cmponqxux002e0dl1wo63dd60"
+
+# Admin
+ESCROW_ADMIN_SECRET           = "wMdspTn4sOi5MubBQXqNOiJMmJx9Ilkv"
+
+# QuickNode RPCs
+QUICKNODE_ETH_RPC_URL         = "https://fluent-chaotic-isle.ethereum-mainnet.quiknode.pro/f31528569e5666353aa6980455d6db886b1fdb67/"
+QUICKNODE_BSC_RPC_URL         = "https://aged-wider-patron.bsc.quiknode.pro/f6d368b36d66e86f35d479d9b0c6bc5d536c3820/"
+QUICKNODE_POLYGON_RPC_URL     = "https://solemn-tiniest-layer.matic.quiknode.pro/3baff779404b4feab16a78c181cf0d96a4b869c9/"
+QUICKNODE_BASE_RPC_URL        = "https://palpable-frosty-scion.base-mainnet.quiknode.pro/63b161ecd0c3e9d5ceecfdcae754c58b7d042d0d/"
+QUICKNODE_TRON_RPC_URL        = "https://wider-holy-thunder.tron-mainnet.quiknode.pro/0d8be9d9606d162cd7354078c0267db4aaa15613/jsonrpc"
