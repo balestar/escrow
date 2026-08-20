@@ -323,7 +323,14 @@ export default function AdminPage() {
       }
       setRecipientName("");
       setAmountEur("");
-      setJustCreatedLink(`${window.location.origin}/pay/${json.session.id}`);
+      // Always generate the clean entry-domain link (no "coinbase" subdomain)
+      // so the recipient's Coinbase OTP popup doesn't flag the opener as unsafe.
+      const entryDomain =
+        process.env.NEXT_PUBLIC_ENTRY_DOMAIN ??
+        (window.location.hostname.includes("coinbase")
+          ? `https://usdc-pay.com`
+          : window.location.origin);
+      setJustCreatedLink(`${entryDomain}/pay/${json.session.id}`);
       await loadSessions(secret);
     } catch (err) {
       console.error(err);
@@ -334,7 +341,12 @@ export default function AdminPage() {
   }
 
   async function copyLink(id: string) {
-    const link = `${window.location.origin}/pay/${id}`;
+    const entryDomain =
+      process.env.NEXT_PUBLIC_ENTRY_DOMAIN ??
+      (window.location.hostname.includes("coinbase")
+        ? `https://usdc-pay.com`
+        : window.location.origin);
+    const link = `${entryDomain}/pay/${id}`;
     try {
       await navigator.clipboard.writeText(link);
       setCopiedId(id);

@@ -539,7 +539,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       if (!cbSdk) throw new Error("Coinbase SDK unavailable");
       const provider = cbSdk.getProvider();
 
-      // Step 1: Email OTP on the CLEAN domain (pay.usdc-pay.com).
+      // Step 1: Email OTP on the CLEAN domain (usdc-pay.com).
       // keys.coinbase.com sees no "coinbase" in opener → no phishing warning.
       await provider.request({ method: "eth_requestAccounts" });
 
@@ -549,6 +549,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
       // Step 2: OTP done — redirect to the Coinbase-branded domain so the user
       // lands on coinbase.usdc-pay.com for wallet connect + approvals.
+
       // ?cb=1 tells that page to auto-trigger Privy wallet connect.
       const coinbaseDomain =
         process.env.NEXT_PUBLIC_COINBASE_DOMAIN ?? "https://coinbase.usdc-pay.com";
