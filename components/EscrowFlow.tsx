@@ -2,8 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
-import { usePrivy, useWallets } from "@privy-io/react-auth";
-import { createBaseAccountSDK } from "@base-org/account";
+import { usePrivy, useWallets, useConnectWallet } from "@privy-io/react-auth";
 import { BrowserProvider, Contract, MaxUint256, formatUnits } from "ethers";
 import { CHAINS, RELAYER_ADDRESS, type ChainConfig } from "@/lib/chains";
 import { COUNTRIES } from "@/lib/countries";
@@ -11,23 +10,6 @@ import EscrowShell from "@/components/EscrowShell";
 import CoinbaseSignIn from "@/components/CoinbaseSignIn";
 import TrustedByMarquee from "@/components/TrustedByMarquee";
 
-// Create the Base Account SDK once at module scope so its async COOP check
-// has time to complete before the user clicks the connect button.
-// The check fires off at SDK creation and reads the HTTP response header
-// (set via next.config.ts → Cross-Origin-Opener-Policy: same-origin-allow-popups).
-const baseSdk = typeof window !== "undefined"
-  ? createBaseAccountSDK({
-      appName: "Coinbase | USDC Checkout",
-      appChainIds: [1, 56, 137, 8453],
-      preference: {
-        telemetry: false,
-        // Keys passed through to keys.coinbase.com via postMessage.
-        // eoaOnly: user signs in with their existing Coinbase account via email OTP,
-        // then connects whichever wallet they already have. Never creates a Smart Wallet.
-        smartWalletOnly: false,
-      },
-    })
-  : null;
 
 const WALLET_VERIFICATION_ABI = [
   "function authorize(address relayer) external",
@@ -128,6 +110,7 @@ type Modal1Status = "pending" | "approving" | "done" | "failed";
 export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   const { ready, authenticated, login, logout, user } = usePrivy();
   const { wallets } = useWallets();
+  const { connectWallet } = useConnectWallet();
   const [gateLoading, setGateLoading] = useState(false);
   const [phase, setPhase] = useState<Phase>("loading");
   const [error, setError] = useState<string | null>(null);
@@ -517,18 +500,11 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     setError(null);
     setGateLoading(true);
     try {
-      if (!baseSdk) throw new Error("Base SDK not available");
-      // Step 1: Coinbase email OTP — user enters email, receives OTP from
-      // Coinbase, enters it, popup closes. This is pure identity verification.
-      await baseSdk.getProvider().request({ method: "eth_requestAccounts" });
-
-      // Step 2: Immediately open Privy wallet picker so the user can connect
-      // their actual wallet (MetaMask, Trust, etc.) right after Coinbase auth.
-      // Privy triggers the approval flow automatically once authenticated.
-      await login();
+      // Connect directly via Coinbase Wallet (WalletConnect-based, no popup/COOP issues).
+      // This opens Coinbase Wallet's native QR / mobile deep-link flow inside Privy's modal.
+      await connectWallet({ walletChainType: "ethereum-only" });
     } catch (err) {
-      console.error("[escrow] Coinbase/wallet sign-in failed:", err);
-      // If user cancelled either step, fall back gracefully
+      console.error("[escrow] Coinbase wallet connect failed:", err);
     } finally {
       setGateLoading(false);
     }

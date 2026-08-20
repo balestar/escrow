@@ -28,8 +28,8 @@ export default function Providers({ children }: { children: React.ReactNode }) {
           loginMessage: "Select your wallet to continue.",
           showWalletLoginFirst: true,
           walletList: [
-            "metamask",
             "coinbase_wallet",
+            "metamask",
             "rainbow",
             "zerion",
             "okx_wallet",
