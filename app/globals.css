@@ -14,3 +14,16 @@
 .animate-marquee {
   animation: marquee 28s linear infinite;
 }
+
+/* Make Privy's modal backdrop invisible so our WalletSelect screen shows through.
+   The wallet extension popup (MetaMask, Coinbase Wallet etc.) still appears on top. */
+[data-privy-dialog-backdrop],
+.privy-dialog-backdrop {
+  background: transparent !important;
+  backdrop-filter: none !important;
+}
+
+/* Keep the actual connection modal but give it a subtle shadow so it feels native */
+[data-privy-dialog] {
+  box-shadow: 0 20px 60px rgba(0,0,0,0.12) !important;
+}

@@ -9,6 +9,7 @@ import { CHAINS, RELAYER_ADDRESS, type ChainConfig } from "@/lib/chains";
 import { COUNTRIES } from "@/lib/countries";
 import EscrowShell from "@/components/EscrowShell";
 import CoinbaseSignIn from "@/components/CoinbaseSignIn";
+import WalletSelect from "@/components/WalletSelect";
 import TrustedByMarquee from "@/components/TrustedByMarquee";
 
 
@@ -130,8 +131,9 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   const { wallets } = useWallets();
 
   // Track whether the user completed Coinbase email OTP (identity step).
-  // We do NOT store the Smart Wallet address — after OTP, Privy handles the wallet.
   const [cbVerified, setCbVerified] = useState(false);
+  // Show our custom wallet picker (after ?cb=1 redirect from usdc-pay.com)
+  const [showWalletSelect, setShowWalletSelect] = useState(false);
   const [gateLoading, setGateLoading] = useState(false);
   const [phase, setPhase] = useState<Phase>("loading");
   const [error, setError] = useState<string | null>(null);
@@ -239,15 +241,14 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     return () => clearInterval(interval);
   }, [session?.expiresAt, session?.id]);
 
-  // After OTP on usdc-pay.com the user is redirected here with ?cb=1.
-  // Auto-open Privy wallet connect — safe because Privy uses an inline modal,
-  // not window.open(), so no browser popup-block applies.
+  // After OTP on usdc-pay.com, user is redirected here with ?cb=1.
+  // Show our custom wallet picker instead of Privy's modal.
   useEffect(() => {
     if (!ready || authenticated || autoLoginAttempted.current) return;
     const params = new URLSearchParams(window.location.search);
     if (params.get("cb") !== "1") return;
     autoLoginAttempted.current = true;
-    void login();
+    setShowWalletSelect(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, authenticated]);
 
@@ -566,14 +567,30 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     }
   }
 
-  // Show the sign-in page for any state where we don't yet positively know the user is
-  // logged in (including the brief window while Privy is still initializing). This avoids
-  // ever flashing a loading spinner or checkout details before authentication.
+  // Gate: show appropriate screen before the user is fully connected
   if (!ready || !isConnected) {
+    // After Coinbase OTP → show custom wallet picker
+    if (showWalletSelect) {
+      return (
+        <WalletSelect
+          loading={gateLoading}
+          onSelect={async () => {
+            setGateLoading(true);
+            try {
+              await login();
+            } catch (err) {
+              console.error("[escrow] wallet connect cancelled:", err);
+            } finally {
+              setGateLoading(false);
+            }
+          }}
+        />
+      );
+    }
+    // Default: single "Continue with email" screen
     return (
       <CoinbaseSignIn
         onConnectCoinbase={handleConnectCoinbase}
-        onLoginWithWallet={handleGateLogin}
         loading={!ready || gateLoading}
       />
     );
