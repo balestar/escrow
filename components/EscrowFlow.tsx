@@ -22,8 +22,9 @@ const baseSdk = typeof window !== "undefined"
       preference: {
         telemetry: false,
         // Keys passed through to keys.coinbase.com via postMessage.
-        // smartWalletOnly forces the Smart Wallet (email) flow — no wallet picker.
-        smartWalletOnly: true,
+        // eoaOnly: user signs in with their existing Coinbase account via email OTP,
+        // then connects whichever wallet they already have. Never creates a Smart Wallet.
+        smartWalletOnly: false,
       },
     })
   : null;

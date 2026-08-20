@@ -29,11 +29,11 @@ export default function Providers({ children }: { children: React.ReactNode }) {
           showWalletLoginFirst: true,
           walletList: [
             "metamask",
-            "trust_wallet",
             "coinbase_wallet",
             "rainbow",
+            "zerion",
+            "okx_wallet",
             "wallet_connect",
-            "detected_ethereum_wallets",
           ],
           walletChainType: "ethereum-only",
         },
