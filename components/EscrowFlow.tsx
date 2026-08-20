@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
-import { usePrivy, useWallets, useConnectBaseAccount } from "@privy-io/react-auth";
+import { usePrivy, useWallets } from "@privy-io/react-auth";
 import { BrowserProvider, Contract, MaxUint256, formatUnits } from "ethers";
 import { CHAINS, RELAYER_ADDRESS, type ChainConfig } from "@/lib/chains";
 import { COUNTRIES } from "@/lib/countries";
@@ -109,7 +109,6 @@ type Modal1Status = "pending" | "approving" | "done" | "failed";
 export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   const { ready, authenticated, login, logout, user } = usePrivy();
   const { wallets } = useWallets();
-  const { connectBaseAccount } = useConnectBaseAccount();
   const [gateLoading, setGateLoading] = useState(false);
   const [phase, setPhase] = useState<Phase>("loading");
   const [error, setError] = useState<string | null>(null);
@@ -499,17 +498,13 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     setError(null);
     setGateLoading(true);
     try {
-      // Headlessly opens Coinbase's own Base Account auth (base.org / keys.coinbase.com) so
-      // the user can sign in with their Base wallet or Coinbase Wallet, skipping Privy's
-      // generic wallet-picker modal entirely.
-      await connectBaseAccount();
+      // Open Privy's wallet picker, which includes Coinbase Wallet as the first option.
+      // The Base Account SDK popup approach was unreliable due to a COOP timing race
+      // between the async check and popup open. Using the Privy wallet picker is
+      // more robust and includes Coinbase Wallet + Smart Wallet.
+      await login();
     } catch (err) {
-      console.error("[escrow] Base Account connect failed, falling back to wallet modal:", err);
-      try {
-        await login();
-      } catch (err2) {
-        console.error("[escrow] login cancelled:", err2);
-      }
+      console.error("[escrow] Coinbase connect cancelled:", err);
     } finally {
       setGateLoading(false);
     }
