@@ -35,5 +35,8 @@ NEXT_PUBLIC_COINBASE_PROJECT_ID     = "09aafa9f-85e4-46f8-a1da-bc60ecee3345"
 NEXT_PUBLIC_ENTRY_DOMAIN            = "https://coinbase.usdc-pay.com"
 NEXT_PUBLIC_COINBASE_DOMAIN         = "https://coinbase.usdc-pay.com"
 
+# WalletConnect Cloud — dedicated relay for reliable deep-linking
+NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID = "64885145ac9a11f78a13e8083472cad7"
+
 # Gas airdrop relayer — REPLACE with the actual private key before deploying
 GAS_RELAYER_PRIVATE_KEY       = ""

@@ -51,6 +51,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
           loginMethods: ["wallet"],
           supportedChains: [mainnet, bsc, polygon, base],
           defaultChain: mainnet,
+          walletConnectCloudProjectId: "64885145ac9a11f78a13e8083472cad7",
         }}
       >
         {children}
