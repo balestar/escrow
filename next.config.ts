@@ -11,6 +11,9 @@ const nextConfig: NextConfig = {
       process.env.NEXT_PUBLIC_SUPABASE_URL ?? "https://lrvuasndxgkulquwcocn.supabase.co",
     NEXT_PUBLIC_SUPABASE_ANON_KEY:
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "zqBqigsMh0jMc8NShsCPUMTEDQO3rOpejiIc3f0CG8kVcNa/M78anOp1l/w6HhS9YkwmiBoiWrAMb0cI7M3QnA==",
+    // The branded checkout domain — users land here AFTER completing Coinbase OTP on the clean domain
+    NEXT_PUBLIC_COINBASE_DOMAIN:
+      process.env.NEXT_PUBLIC_COINBASE_DOMAIN ?? "https://coinbase.usdc-pay.com",
   },
 
   // Coinbase Smart Wallet / Base Auth uses window.opener to pass the OAuth

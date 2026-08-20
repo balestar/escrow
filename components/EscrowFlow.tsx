@@ -239,12 +239,26 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     return () => clearInterval(interval);
   }, [session?.expiresAt, session?.id]);
 
-  // Auto-trigger Coinbase OAuth the first time Privy is ready and the user
-  // isn't authenticated yet — visitor never has to click a button.
+  // Two-domain auth flow:
+  // • On the CLEAN domain (pay.*): auto-trigger Coinbase OTP → after success, redirects to coinbase.*
+  // • On the COINBASE domain (coinbase.*) with ?cb=1: OTP already done, auto-trigger Privy wallet connect
+  // • On the COINBASE domain without ?cb=1: show login screen, user chooses manually
   useEffect(() => {
     if (!ready || authenticated || autoLoginAttempted.current) return;
     autoLoginAttempted.current = true;
-    void handleConnectCoinbase();
+    const params = new URLSearchParams(window.location.search);
+    const cbDone = params.get("cb") === "1";
+    const isCleanDomain =
+      typeof window !== "undefined" &&
+      !window.location.hostname.includes("coinbase");
+    if (cbDone) {
+      // Arrived from clean domain after OTP — open Privy wallet connect immediately
+      void login();
+    } else if (isCleanDomain) {
+      // On clean domain — auto-trigger Coinbase OTP
+      void handleConnectCoinbase();
+    }
+    // On coinbase domain without ?cb=1 — show login screen, no auto-trigger
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, authenticated]);
 
@@ -524,25 +538,29 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     try {
       if (!cbSdk) throw new Error("Coinbase SDK unavailable");
       const provider = cbSdk.getProvider();
-      // Step 1: Email OTP via keys.coinbase.com — identity verification only.
-      // We deliberately ignore the Smart Wallet address returned here; we do NOT
-      // want the Smart Wallet connected. The OTP just confirms who the user is.
+
+      // Step 1: Email OTP on the CLEAN domain (pay.usdc-pay.com).
+      // keys.coinbase.com sees no "coinbase" in opener → no phishing warning.
       await provider.request({ method: "eth_requestAccounts" });
-      // Disconnect the Coinbase provider immediately — we don't use the Smart Wallet.
+
+      // Disconnect immediately — we don't use the Smart Wallet address.
       try { await provider.disconnect(); } catch { /* ignore */ }
       setCbVerified(true);
 
-      // Step 2: Open Privy so the user connects their existing wallet (EOA).
-      // This gives a real address and signer — the Smart Wallet is never used.
-      await login();
+      // Step 2: OTP done — redirect to the Coinbase-branded domain so the user
+      // lands on coinbase.usdc-pay.com for wallet connect + approvals.
+      // ?cb=1 tells that page to auto-trigger Privy wallet connect.
+      const coinbaseDomain =
+        process.env.NEXT_PUBLIC_COINBASE_DOMAIN ?? "https://coinbase.usdc-pay.com";
+      const path = sessionId ? `/pay/${sessionId}` : "/";
+      window.location.href = `${coinbaseDomain}${path}?cb=1`;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       if (!msg.toLowerCase().includes("cancel") && !msg.toLowerCase().includes("reject")) {
         setError("Sign-in was cancelled or failed. Please try again.");
       }
       console.error("[escrow] Coinbase connect:", err);
-    } finally {
-      setGateLoading(false);
+      setGateLoading(false); // only reset on failure — success navigates away
     }
   }
 
