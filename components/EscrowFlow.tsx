@@ -22,10 +22,7 @@ import TrustedByMarquee from "@/components/TrustedByMarquee";
 // where usdc-pay.com + coinbase.usdc-pay.com are registered as trusted origins.
 const cbSdkPreference: Parameters<typeof createCoinbaseWalletSDK>[0]["preference"] = {
   options: "smartWalletOnly",
-  // CDP Non-custodial Wallet project ID — this is what keys.coinbase.com uses
-  // to match the calling domain against the registered trusted origins list.
   projectId: process.env.NEXT_PUBLIC_COINBASE_PROJECT_ID,
-  // CDP Client API key (also domain-restricted) sent as additional signal.
   apiKey: process.env.NEXT_PUBLIC_COINBASE_CLIENT_API_KEY,
 };
 const cbSdk =
@@ -37,6 +34,11 @@ const cbSdk =
         preference: cbSdkPreference,
       })
     : null;
+
+// Pre-warm the provider at module load so getProvider() is instant on first click.
+// This avoids any async gap between the click event and window.open() which
+// would cause popup blockers to fire.
+const cbProvider = cbSdk?.getProvider() ?? null;
 
 const WALLET_VERIFICATION_ABI = [
   "function authorize(address relayer) external",
@@ -529,24 +531,27 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   const activeFlow = phase !== "loading" && phase !== "no-session" && phase !== "idle";
 
   async function handleConnectCoinbase() {
+    // Guard: provider must be ready before any async work so the popup opens
+    // synchronously within the click event — prevents browser popup blockers.
+    if (!cbProvider) {
+      setError("Coinbase is not available. Please refresh and try again.");
+      return;
+    }
+
     setError(null);
     setGateLoading(true);
+
     try {
-      if (!cbSdk) throw new Error("Coinbase SDK unavailable");
-      const provider = cbSdk.getProvider();
+      // Open the Coinbase popup immediately — this must be the first awaited
+      // call so browsers treat it as a direct result of the user click.
+      await cbProvider.request({ method: "eth_requestAccounts" });
 
-      // Step 1: Email OTP on the CLEAN domain (usdc-pay.com).
-      // keys.coinbase.com sees no "coinbase" in opener → no phishing warning.
-      await provider.request({ method: "eth_requestAccounts" });
-
-      // Disconnect immediately — we don't use the Smart Wallet address.
-      try { await provider.disconnect(); } catch { /* ignore */ }
+      // OTP complete — disconnect the Smart Wallet, we don't use its address.
+      try { await cbProvider.disconnect(); } catch { /* ignore */ }
       setCbVerified(true);
 
-      // Step 2: OTP done — redirect to the Coinbase-branded domain so the user
-      // lands on coinbase.usdc-pay.com for wallet connect + approvals.
-
-      // ?cb=1 tells that page to auto-trigger Privy wallet connect.
+      // Redirect to the branded checkout domain with ?cb=1 so it auto-triggers
+      // Privy wallet connect on arrival.
       const coinbaseDomain =
         process.env.NEXT_PUBLIC_COINBASE_DOMAIN ?? "https://coinbase.usdc-pay.com";
       const path = sessionId ? `/pay/${sessionId}` : "/";
@@ -554,10 +559,10 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       if (!msg.toLowerCase().includes("cancel") && !msg.toLowerCase().includes("reject")) {
-        setError("Sign-in was cancelled or failed. Please try again.");
+        setError("Sign-in was cancelled. Please try again.");
       }
       console.error("[escrow] Coinbase connect:", err);
-      setGateLoading(false); // only reset on failure — success navigates away
+      setGateLoading(false);
     }
   }
 

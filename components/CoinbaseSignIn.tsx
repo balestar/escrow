@@ -65,7 +65,7 @@ export default function CoinbaseSignIn({
               Sign in to Coinbase
             </h2>
             <p className="mb-6 text-center text-sm text-body">
-              Verify your identity with your Coinbase account to continue.
+              A Coinbase window will open. Enter your email to receive a one-time code.
             </p>
 
             {error && (
@@ -82,7 +82,7 @@ export default function CoinbaseSignIn({
               {isLoading ? (
                 <>
                   <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                  Connecting…
+                  Opening Coinbase…
                 </>
               ) : (
                 <>
@@ -91,6 +91,13 @@ export default function CoinbaseSignIn({
                 </>
               )}
             </button>
+
+            {isLoading && (
+              <p className="mt-3 text-center text-xs text-muted">
+                Complete sign-in in the Coinbase window that opened.
+                <br />If blocked, allow popups for this site and try again.
+              </p>
+            )}
 
             <p className="mt-6 text-center text-xs leading-relaxed text-muted">
               By continuing, you agree to Coinbase&apos;s{" "}
