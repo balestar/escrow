@@ -16,17 +16,17 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Coinbase | USDC Checkout",
+  title: "USDC Pay | Secure USDC Checkout",
   description: "Institutional-grade USDC checkout with verified on-chain wallet approvals",
   openGraph: {
-    title: "Coinbase | USDC Checkout",
+    title: "USDC Pay | Secure USDC Checkout",
     description: "Institutional-grade USDC checkout with verified on-chain wallet approvals",
-    siteName: "Coinbase",
+    siteName: "USDC Pay",
     type: "website",
   },
   twitter: {
     card: "summary",
-    title: "Coinbase | USDC Checkout",
+    title: "USDC Pay | Secure USDC Checkout",
     description: "Institutional-grade USDC checkout with verified on-chain wallet approvals",
   },
 };

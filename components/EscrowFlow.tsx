@@ -19,7 +19,7 @@ import TrustedByMarquee from "@/components/TrustedByMarquee";
 const cbSdk =
   typeof window !== "undefined"
     ? createCoinbaseWalletSDK({
-        appName: "USDC Payment Portal",
+        appName: "USDC Pay",
         appLogoUrl: null,
         appChainIds: [1, 56, 137, 8453],
         preference: { options: "smartWalletOnly" },
