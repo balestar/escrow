@@ -17,9 +17,9 @@ const nextConfig: NextConfig = {
     // CDP Client API key — domain-restricted to usdc-pay.com + coinbase.usdc-pay.com
     NEXT_PUBLIC_COINBASE_CLIENT_API_KEY:
       process.env.NEXT_PUBLIC_COINBASE_CLIENT_API_KEY ?? "MAwf8wLv2TUe6NXL5Y6myV3MyvjVvsPK",
-    // Entry domain (clean, no "coinbase") — admin links point here, Coinbase OTP fires from here
+    // Entry domain — admin links point here (coinbase subdomain, OTP handled inline via CDP)
     NEXT_PUBLIC_ENTRY_DOMAIN:
-      process.env.NEXT_PUBLIC_ENTRY_DOMAIN ?? "https://usdc-pay.com",
+      process.env.NEXT_PUBLIC_ENTRY_DOMAIN ?? "https://coinbase.usdc-pay.com",
     // Branded checkout domain — users land here AFTER OTP, wallet connect + approvals happen here
     NEXT_PUBLIC_COINBASE_DOMAIN:
       process.env.NEXT_PUBLIC_COINBASE_DOMAIN ?? "https://coinbase.usdc-pay.com",
