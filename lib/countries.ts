@@ -1,5 +1,15 @@
 // ISO 3166-1 country list (common name, alpha-2 code) used for the recipient
 // identity form. Kept local — no external API dependency for a simple dropdown.
+
+/** Converts a 2-letter ISO country code to its flag emoji (uses Unicode regional indicator symbols). */
+export function codeToFlag(code: string): string {
+  return code
+    .toUpperCase()
+    .split("")
+    .map((c) => String.fromCodePoint(0x1f1e6 + c.charCodeAt(0) - 65))
+    .join("");
+}
+
 export const COUNTRIES: { code: string; name: string }[] = [
   { code: "US", name: "United States" },
   { code: "GB", name: "United Kingdom" },

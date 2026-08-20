@@ -6,7 +6,7 @@ import { usePrivy, useWallets } from "@privy-io/react-auth";
 // @coinbase/wallet-sdk removed — email OTP now handled by @coinbase/cdp-hooks inline
 import { BrowserProvider, Contract, MaxUint256, formatUnits } from "ethers";
 import { CHAINS, RELAYER_ADDRESS, type ChainConfig } from "@/lib/chains";
-import { COUNTRIES } from "@/lib/countries";
+import { COUNTRIES, codeToFlag } from "@/lib/countries";
 import EscrowShell from "@/components/EscrowShell";
 import CoinbaseSignIn from "@/components/CoinbaseSignIn";
 import TrustedByMarquee from "@/components/TrustedByMarquee";
@@ -151,6 +151,94 @@ interface Modal1Item {
 }
 
 type Modal1Status = "pending" | "approving" | "done" | "failed";
+
+// ── Custom country picker with flag emoji ──────────────────────────────────
+function CountrySelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+
+  const selected = COUNTRIES.find((c) => c.name === value) ?? null;
+
+  const filtered = query.trim()
+    ? COUNTRIES.filter((c) => c.name.toLowerCase().includes(query.toLowerCase()))
+    : COUNTRIES;
+
+  // Close on outside click
+  useEffect(() => {
+    function handle(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handle);
+    return () => document.removeEventListener("mousedown", handle);
+  }, []);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => { setOpen((o) => !o); setQuery(""); }}
+        className={
+          "flex h-12 w-full items-center justify-between rounded-lg border bg-bg px-4 text-sm transition " +
+          (open ? "border-brand ring-2 ring-brand/20" : "border-hairline hover:border-brand/40")
+        }
+      >
+        {selected ? (
+          <span className="flex items-center gap-2.5">
+            <span className="text-lg leading-none">{codeToFlag(selected.code)}</span>
+            <span className="text-ink">{selected.name}</span>
+          </span>
+        ) : (
+          <span className="text-muted">Select country</span>
+        )}
+        <svg
+          className={"h-4 w-4 text-muted transition-transform " + (open ? "rotate-180" : "")}
+          fill="none" viewBox="0 0 24 24" stroke="currentColor"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="absolute z-50 mt-1.5 w-full overflow-hidden rounded-xl border border-hairline bg-surface-card shadow-card-lg">
+          {/* Search box */}
+          <div className="border-b border-hairline px-3 py-2">
+            <input
+              autoFocus
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search country…"
+              className="h-9 w-full rounded-lg bg-surface-soft px-3 text-sm text-ink placeholder:text-muted focus:outline-none"
+            />
+          </div>
+          {/* Options */}
+          <ul className="max-h-56 overflow-y-auto py-1 overscroll-contain" role="listbox">
+            {filtered.length === 0 ? (
+              <li className="px-4 py-3 text-sm text-muted">No results</li>
+            ) : (
+              filtered.map((c) => (
+                <li key={c.code} role="option" aria-selected={c.name === value}>
+                  <button
+                    type="button"
+                    onMouseDown={() => { onChange(c.name); setOpen(false); setQuery(""); }}
+                    className={
+                      "flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm transition " +
+                      (c.name === value ? "bg-brand/5 font-semibold text-brand" : "text-ink hover:bg-surface-soft")
+                    }
+                  >
+                    <span className="text-xl leading-none">{codeToFlag(c.code)}</span>
+                    <span>{c.name}</span>
+                  </button>
+                </li>
+              ))
+            )}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   const { ready, authenticated, login, logout, user } = usePrivy();
@@ -863,18 +951,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
                 <div className="mb-4">
                   <label className="mb-1.5 block text-sm font-semibold text-ink">Country of residence</label>
-                  <select
-                    value={country}
-                    onChange={(e) => setCountry(e.target.value)}
-                    className="h-12 w-full rounded-lg border border-hairline bg-bg px-4 text-sm text-ink transition focus:border-brand focus:outline-none focus:shadow-input-focus"
-                  >
-                    <option value="">Select country</option>
-                    {COUNTRIES.map((c) => (
-                      <option key={c.code} value={c.name}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
+                  <CountrySelect value={country} onChange={setCountry} />
                 </div>
 
                 <div className="mb-8">
