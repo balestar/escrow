@@ -11,8 +11,8 @@ function BrandMark({ className = "h-5 w-5 sm:h-6 sm:w-6" }: { className?: string
   );
 }
 
-function short(addr: string) {
-  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
+function short(addr: string, lead = 6, tail = 4) {
+  return `${addr.slice(0, lead)}...${addr.slice(-tail)}`;
 }
 
 export default function EscrowShell({
