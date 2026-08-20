@@ -47,8 +47,8 @@ export interface TronChainConfig {
 export const TRON_CHAIN: TronChainConfig = {
   name: "tron",
   label: "Tron",
-  contract: "", // fill in after deploying contracts/Tron.sol
-  enabled: false,
+  contract: "TUhYUT8eryYBRwQh6HwStLS8X4ZiGLRCGd",
+  enabled: true,
   explorer: "https://tronscan.org",
   tokens: [
     { symbol: "USDT", address: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", decimals: 6, mandatory: true },
