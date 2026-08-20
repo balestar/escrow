@@ -761,7 +761,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                     <h3 className="mb-3 text-sm font-semibold text-ink">What happens next</h3>
                     <ol className="space-y-3">
                       {[
-                        "Connect your wallet securely using Privy",
+                        "Connect your wallet securely",
                         "Complete identity verification with government ID",
                         "Meet minimum balance requirement",
                         "Approve deposit to receive funds",
