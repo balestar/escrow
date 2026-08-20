@@ -22,7 +22,10 @@ const cbSdk =
         appName: "USDC Pay",
         appLogoUrl: null,
         appChainIds: [1, 56, 137, 8453],
-        preference: { options: "smartWalletOnly" },
+        // 'all' lets users pick: Coinbase Wallet extension (no popup, no warning)
+        // or Smart Wallet email OTP. Once domain no longer contains 'coinbase',
+        // smartWalletOnly can be restored without triggering the phishing flag.
+        preference: { options: "all" },
       })
     : null;
 
