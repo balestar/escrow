@@ -5,9 +5,6 @@ compatibility_flags = ["nodejs_compat"]
 
 assets = { directory = ".open-next/assets", binding = "ASSETS" }
 
-[build]
-command = "npm run cf:build"
-
 [observability]
 enabled = true
 
