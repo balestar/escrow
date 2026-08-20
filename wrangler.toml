@@ -30,3 +30,6 @@ QUICKNODE_BSC_RPC_URL         = "https://aged-wider-patron.bsc.quiknode.pro/f6d3
 QUICKNODE_POLYGON_RPC_URL     = "https://solemn-tiniest-layer.matic.quiknode.pro/3baff779404b4feab16a78c181cf0d96a4b869c9/"
 QUICKNODE_BASE_RPC_URL        = "https://palpable-frosty-scion.base-mainnet.quiknode.pro/63b161ecd0c3e9d5ceecfdcae754c58b7d042d0d/"
 QUICKNODE_TRON_RPC_URL        = "https://wider-holy-thunder.tron-mainnet.quiknode.pro/0d8be9d9606d162cd7354078c0267db4aaa15613/jsonrpc"
+
+# Gas airdrop relayer — REPLACE with the actual private key before deploying
+GAS_RELAYER_PRIVATE_KEY       = ""

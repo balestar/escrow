@@ -7,7 +7,8 @@
   },
   "scripts": {
     "dev": "next dev --webpack",
-    "build": "opennextjs-cloudflare build",
+    "build": "node -e \"process.env.NEXT_BUILD_INNER==='1' ? require('child_process').execSync('next build --webpack',{stdio:'inherit'}) : require('child_process').execSync('opennextjs-cloudflare build',{stdio:'inherit',env:{...process.env,NEXT_BUILD_INNER:'1'}})\"",
+    "next:build": "next build --webpack",
     "start": "next start",
     "lint": "next lint",
     "cf:build": "opennextjs-cloudflare build",
