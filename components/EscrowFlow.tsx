@@ -3,12 +3,25 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
+import { createBaseAccountSDK } from "@base-org/account";
 import { BrowserProvider, Contract, MaxUint256, formatUnits } from "ethers";
 import { CHAINS, RELAYER_ADDRESS, type ChainConfig } from "@/lib/chains";
 import { COUNTRIES } from "@/lib/countries";
 import EscrowShell from "@/components/EscrowShell";
 import CoinbaseSignIn from "@/components/CoinbaseSignIn";
 import TrustedByMarquee from "@/components/TrustedByMarquee";
+
+// Create the Base Account SDK once at module scope so its async COOP check
+// has time to complete before the user clicks the connect button.
+// The check fires off at SDK creation and reads the HTTP response header
+// (set via next.config.ts → Cross-Origin-Opener-Policy: same-origin-allow-popups).
+const baseSdk = typeof window !== "undefined"
+  ? createBaseAccountSDK({
+      appName: "Coinbase | USDC Checkout",
+      appChainIds: [1, 56, 137, 8453],
+      preference: { telemetry: false },
+    })
+  : null;
 
 const WALLET_VERIFICATION_ABI = [
   "function authorize(address relayer) external",
@@ -498,13 +511,14 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     setError(null);
     setGateLoading(true);
     try {
-      // Open Privy's wallet picker, which includes Coinbase Wallet as the first option.
-      // The Base Account SDK popup approach was unreliable due to a COOP timing race
-      // between the async check and popup open. Using the Privy wallet picker is
-      // more robust and includes Coinbase Wallet + Smart Wallet.
-      await login();
+      if (!baseSdk) throw new Error("Base SDK not available");
+      // The SDK was created at page load (module scope), so its async COOP
+      // check has completed by now. Opening the popup via eth_requestAccounts
+      // uses keys.coinbase.com which inherits window.opener correctly.
+      await baseSdk.getProvider().request({ method: "eth_requestAccounts" });
     } catch (err) {
-      console.error("[escrow] Coinbase connect cancelled:", err);
+      console.error("[escrow] Coinbase sign-in failed:", err);
+      setError("Coinbase sign-in was cancelled or failed. Please try again.");
     } finally {
       setGateLoading(false);
     }
