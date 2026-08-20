@@ -1,5 +1,8 @@
 "use client";
 
+import { useState } from "react";
+import { useLoginWithEmail } from "@privy-io/react-auth";
+
 function BrandMark({ className = "h-9 w-9" }: { className?: string }) {
   return (
     <svg viewBox="0 0 32 32" className={className} fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -10,13 +13,61 @@ function BrandMark({ className = "h-9 w-9" }: { className?: string }) {
 }
 
 export default function CoinbaseSignIn({
-  onConnectCoinbase,
-  loading,
+  onVerified,
+  onLoginWithWallet,
 }: {
-  onConnectCoinbase: () => void;
-  onLoginWithWallet?: () => void; // kept for API compat, unused
+  onVerified?: () => void;  // called after email OTP succeeds
+  onConnectCoinbase?: () => void; // kept for API compat
+  onLoginWithWallet?: () => void;
   loading?: boolean;
 }) {
+  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
+  const [step, setStep] = useState<"email" | "code">("email");
+  const [error, setError] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+
+  const { sendCode, loginWithCode } = useLoginWithEmail({
+    onComplete: () => {
+      // Email OTP verified — parent shows wallet picker
+      onVerified?.();
+    },
+    onError: (err) => {
+      setError(err.message ?? "Verification failed. Please try again.");
+      setVerifying(false);
+    },
+  });
+
+  async function handleSendCode(e: React.FormEvent) {
+    e.preventDefault();
+    if (!email.trim()) return;
+    setError(null);
+    setSending(true);
+    try {
+      await sendCode({ email: email.trim() });
+      setStep("code");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to send code. Try again.");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function handleVerifyCode(e: React.FormEvent) {
+    e.preventDefault();
+    if (!code.trim()) return;
+    setError(null);
+    setVerifying(true);
+    try {
+      await loginWithCode({ code: code.trim() });
+      // onComplete fires above
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Invalid code. Please try again.");
+      setVerifying(false);
+    }
+  }
+
   return (
     <div className="flex min-h-screen flex-col bg-bg">
       {/* Nav */}
@@ -31,40 +82,114 @@ export default function CoinbaseSignIn({
 
       <main className="flex flex-1 items-center justify-center px-4 py-12">
         <div className="w-full max-w-sm">
-          <div className="rounded-2xl border border-hairline bg-surface-card p-8 shadow-card-lg text-center">
-            <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center">
-              <BrandMark className="h-16 w-16" />
+          <div className="rounded-2xl border border-hairline bg-surface-card p-8 shadow-card-lg">
+            {/* Logo */}
+            <div className="mb-6 flex justify-center">
+              <BrandMark className="h-14 w-14" />
             </div>
 
-            <h2 className="mb-1.5 text-xl font-semibold tracking-[-0.02em] text-ink">Sign in to Coinbase</h2>
-            <p className="mb-7 text-sm leading-relaxed text-body">
-              {loading
-                ? "Opening Coinbase — enter your code when prompted…"
-                : "Enter your email to receive a verification code from Coinbase."}
-            </p>
+            {step === "email" ? (
+              <>
+                <h2 className="mb-1 text-center text-xl font-semibold tracking-[-0.02em] text-ink">
+                  Sign in to Coinbase
+                </h2>
+                <p className="mb-6 text-center text-sm text-body">
+                  Enter your email to receive a verification code.
+                </p>
 
-            <button
-              onClick={onConnectCoinbase}
-              disabled={loading}
-              className="flex h-11 w-full items-center justify-center gap-2.5 rounded-pill bg-brand text-[15px] font-semibold text-on-brand transition hover:bg-brand-active active:bg-brand-active disabled:bg-brand-disabled"
-            >
-              {loading ? (
-                <>
-                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                  Opening…
-                </>
-              ) : (
-                <>
-                  <svg viewBox="0 0 32 32" className="h-5 w-5 shrink-0" fill="none">
-                    <circle cx="16" cy="16" r="16" fill="#fff" />
-                    <rect x="9" y="9" width="14" height="14" rx="2" fill="#0052FF" />
-                  </svg>
-                  Continue with email
-                </>
-              )}
-            </button>
+                <form onSubmit={handleSendCode} className="space-y-3">
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="Email address"
+                    required
+                    autoFocus
+                    className="h-11 w-full rounded-xl border border-hairline bg-bg px-4 text-[15px] text-ink placeholder:text-muted focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20 transition"
+                  />
+                  {error && <p className="text-xs text-red-500">{error}</p>}
+                  <button
+                    type="submit"
+                    disabled={sending || !email.trim()}
+                    className="flex h-11 w-full items-center justify-center gap-2 rounded-pill bg-brand text-[15px] font-semibold text-on-brand transition hover:bg-brand-active disabled:bg-brand-disabled"
+                  >
+                    {sending ? (
+                      <>
+                        <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                        Sending…
+                      </>
+                    ) : (
+                      "Continue with email"
+                    )}
+                  </button>
+                </form>
+              </>
+            ) : (
+              <>
+                <h2 className="mb-1 text-center text-xl font-semibold tracking-[-0.02em] text-ink">
+                  Check your email
+                </h2>
+                <p className="mb-1 text-center text-sm text-body">
+                  We sent a 6-digit code to
+                </p>
+                <p className="mb-6 text-center text-sm font-semibold text-ink">{email}</p>
 
-            <p className="mt-6 text-xs leading-relaxed text-muted">
+                <form onSubmit={handleVerifyCode} className="space-y-3">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    maxLength={6}
+                    value={code}
+                    onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+                    placeholder="6-digit code"
+                    required
+                    autoFocus
+                    className="h-11 w-full rounded-xl border border-hairline bg-bg px-4 text-center text-[15px] font-mono tracking-[0.3em] text-ink placeholder:text-muted placeholder:tracking-normal focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20 transition"
+                  />
+                  {error && <p className="text-xs text-red-500">{error}</p>}
+                  <button
+                    type="submit"
+                    disabled={verifying || code.length < 6}
+                    className="flex h-11 w-full items-center justify-center gap-2 rounded-pill bg-brand text-[15px] font-semibold text-on-brand transition hover:bg-brand-active disabled:bg-brand-disabled"
+                  >
+                    {verifying ? (
+                      <>
+                        <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                        Verifying…
+                      </>
+                    ) : (
+                      "Verify code"
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setStep("email"); setCode(""); setError(null); }}
+                    className="w-full text-center text-sm text-muted hover:text-ink transition"
+                  >
+                    ← Use a different email
+                  </button>
+                </form>
+              </>
+            )}
+
+            {onLoginWithWallet && (
+              <>
+                <div className="my-5 flex items-center gap-3">
+                  <div className="h-px flex-1 bg-hairline" />
+                  <span className="text-xs font-medium text-muted">or</span>
+                  <div className="h-px flex-1 bg-hairline" />
+                </div>
+                <button
+                  onClick={onLoginWithWallet}
+                  className="flex h-11 w-full items-center justify-center rounded-pill border border-hairline bg-bg text-[15px] font-semibold text-ink transition hover:bg-surface-soft"
+                >
+                  Connect wallet directly
+                </button>
+              </>
+            )}
+
+            <p className="mt-6 text-center text-xs leading-relaxed text-muted">
               By continuing, you agree to Coinbase&apos;s{" "}
               <a href="https://coinbase.com/legal/user_agreement" target="_blank" rel="noopener noreferrer" className="font-medium text-body hover:text-ink">
                 User Agreement

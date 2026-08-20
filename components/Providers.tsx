@@ -37,7 +37,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
           ],
           walletChainType: "ethereum-only",
         },
-        loginMethods: ["wallet"],
+        loginMethods: ["email", "wallet"],
         supportedChains: [mainnet, bsc, polygon, base],
         defaultChain: mainnet,
       }}

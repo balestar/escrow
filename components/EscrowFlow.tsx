@@ -570,7 +570,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
   // Gate: show appropriate screen before the user is fully connected
   if (!ready || !isConnected) {
-    // After Coinbase OTP → show custom wallet picker
+    // After email OTP verified (or ?cb=1 redirect) → show custom wallet picker
     if (showWalletSelect) {
       return (
         <WalletSelect
@@ -588,11 +588,14 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
         />
       );
     }
-    // Default: single "Continue with email" screen
+    // Default: email OTP screen (Privy-powered, no Coinbase SDK popup)
     return (
       <CoinbaseSignIn
-        onConnectCoinbase={handleConnectCoinbase}
-        loading={!ready || gateLoading}
+        onVerified={() => setShowWalletSelect(true)}
+        onLoginWithWallet={async () => {
+          setGateLoading(true);
+          try { await login(); } catch { /* cancelled */ } finally { setGateLoading(false); }
+        }}
       />
     );
   }
