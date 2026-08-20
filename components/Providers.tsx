@@ -30,9 +30,10 @@ export default function Providers({ children }: { children: React.ReactNode }) {
           walletList: [
             "coinbase_wallet",
             "metamask",
-            "detected_ethereum_wallets",
+            "trust_wallet",
             "rainbow",
             "wallet_connect",
+            "detected_ethereum_wallets",
           ],
           walletChainType: "ethereum-only",
         },

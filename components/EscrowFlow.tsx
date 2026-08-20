@@ -19,7 +19,12 @@ const baseSdk = typeof window !== "undefined"
   ? createBaseAccountSDK({
       appName: "Coinbase | USDC Checkout",
       appChainIds: [1, 56, 137, 8453],
-      preference: { telemetry: false },
+      preference: {
+        telemetry: false,
+        // Keys passed through to keys.coinbase.com via postMessage.
+        // smartWalletOnly forces the Smart Wallet (email) flow — no wallet picker.
+        smartWalletOnly: true,
+      },
     })
   : null;
 
