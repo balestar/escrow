@@ -22,10 +22,6 @@ const cbSdk =
         appName: "USDC Pay",
         appLogoUrl: null,
         appChainIds: [1, 56, 137, 8453],
-        // CDP project ID links this app to the whitelisted domains in Coinbase's portal.
-        // Register at https://portal.cdp.coinbase.com → Smart Wallet → Trusted Origins
-        // and add usdc-pay.com + coinbase.usdc-pay.com. Then paste the project ID below.
-        projectId: process.env.NEXT_PUBLIC_COINBASE_PROJECT_ID ?? undefined,
         preference: { options: "smartWalletOnly" },
       })
     : null;
@@ -246,7 +242,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     const params = new URLSearchParams(window.location.search);
     if (params.get("cb") !== "1") return;
     autoLoginAttempted.current = true;
-    setShowWalletSelect(true);
+    void login();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, authenticated]);
 

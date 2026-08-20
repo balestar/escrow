@@ -33,8 +33,8 @@ export default function CoinbaseSignIn({
       // Email OTP verified — parent shows wallet picker
       onVerified?.();
     },
-    onError: (err) => {
-      setError(err.message ?? "Verification failed. Please try again.");
+    onError: () => {
+      setError("Verification failed. Please try again.");
       setVerifying(false);
     },
   });
