@@ -33,7 +33,7 @@ export default function EscrowShell({
         <div className="mx-auto flex h-16 max-w-[1280px] items-center justify-between px-5 sm:px-8">
           <div className="flex items-center gap-2.5">
             <BrandMark />
-            <span className="text-[17px] font-semibold tracking-tight">USDC Pay</span>
+            <span className="text-[17px] font-semibold tracking-tight">Coinbase</span>
           </div>
 
           <div className="flex items-center gap-3">

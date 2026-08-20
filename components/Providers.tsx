@@ -24,7 +24,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
           theme: "light",
           accentColor: "#0052FF",
           logo: "/logos/brand-mark.svg",
-          landingHeader: "Connect to USDC Pay",
+          landingHeader: "Connect your wallet",
           loginMessage: "Select your wallet to continue.",
           showWalletLoginFirst: true,
           walletList: [

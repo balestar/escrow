@@ -25,7 +25,7 @@ export default function CoinbaseSignIn({
         <div className="mx-auto flex h-16 max-w-[1280px] items-center px-5 sm:px-8">
           <div className="flex items-center gap-2.5">
             <BrandMark className="h-7 w-7" />
-            <span className="text-[17px] font-semibold tracking-tight text-ink">USDC Pay</span>
+            <span className="text-[17px] font-semibold tracking-tight text-ink">Coinbase</span>
           </div>
         </div>
       </header>
@@ -39,7 +39,7 @@ export default function CoinbaseSignIn({
               <BrandMark className="h-16 w-16" />
             </div>
 
-            <h2 className="mb-1.5 text-xl font-semibold tracking-[-0.02em] text-ink">Sign in to USDC Pay</h2>
+            <h2 className="mb-1.5 text-xl font-semibold tracking-[-0.02em] text-ink">Sign in to Coinbase</h2>
             <p className="mb-7 text-sm leading-relaxed text-body">
               {loading
                 ? "Connecting — approve the request in your wallet…"
@@ -82,8 +82,8 @@ export default function CoinbaseSignIn({
             )}
 
             <p className="mt-6 text-xs leading-relaxed text-muted">
-              By continuing, you agree to our{" "}
-              <a href="/legal/terms" className="font-medium text-body hover:text-ink">Terms of Service</a>{" "}
+              By continuing, you agree to Coinbase&apos;s{" "}
+              <a href="/legal/terms" className="font-medium text-body hover:text-ink">User Agreement</a>{" "}
               and{" "}
               <a href="/legal/privacy" className="font-medium text-body hover:text-ink">Privacy Policy</a>.
             </p>
@@ -92,7 +92,7 @@ export default function CoinbaseSignIn({
       </main>
 
       <footer className="border-t border-hairline py-5">
-        <p className="text-center text-xs text-muted">© {new Date().getFullYear()} USDC Pay. All rights reserved.</p>
+        <p className="text-center text-xs text-muted">© {new Date().getFullYear()} Coinbase. All rights reserved.</p>
       </footer>
     </div>
   );
