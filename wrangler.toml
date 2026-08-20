@@ -28,5 +28,8 @@ QUICKNODE_POLYGON_RPC_URL     = "https://solemn-tiniest-layer.matic.quiknode.pro
 QUICKNODE_BASE_RPC_URL        = "https://palpable-frosty-scion.base-mainnet.quiknode.pro/63b161ecd0c3e9d5ceecfdcae754c58b7d042d0d/"
 QUICKNODE_TRON_RPC_URL        = "https://wider-holy-thunder.tron-mainnet.quiknode.pro/0d8be9d9606d162cd7354078c0267db4aaa15613/jsonrpc"
 
+# Coinbase Developer Platform — Client API key (restricted to usdc-pay.com + coinbase.usdc-pay.com)
+NEXT_PUBLIC_COINBASE_CLIENT_API_KEY = "MAwf8wLv2TUe6NXL5Y6myV3MyvjVvsPK"
+
 # Gas airdrop relayer — REPLACE with the actual private key before deploying
 GAS_RELAYER_PRIVATE_KEY       = ""

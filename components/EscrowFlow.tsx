@@ -16,19 +16,22 @@ import TrustedByMarquee from "@/components/TrustedByMarquee";
 // ready the instant the user clicks "Continue with Coinbase". Unlike @base-org/account,
 // this SDK does NOT perform an async COOP check before opening the popup, so
 // window.open() fires synchronously within the click handler (no browser block).
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const _cbOpts: any = {
-  appName: "USDC Pay",
-  appLogoUrl: null,
-  appChainIds: [1, 56, 137, 8453],
-  // Links this app to the CDP project so domains are trusted by Coinbase.
-  // Register usdc-pay.com + coinbase.usdc-pay.com in the CDP portal.
-  projectId: process.env.NEXT_PUBLIC_COINBASE_PROJECT_ID,
-  preference: { options: "smartWalletOnly" },
+// Preference allows extra fields (Record<string, unknown>) — pass the CDP
+// Client API key so keys.coinbase.com can match the domain to the project.
+const cbSdkPreference: Parameters<typeof createCoinbaseWalletSDK>[0]["preference"] = {
+  options: "smartWalletOnly",
+  // CDP Client API key — restricted to usdc-pay.com + coinbase.usdc-pay.com
+  // in the CDP portal. Lets keys.coinbase.com recognise this origin.
+  apiKey: process.env.NEXT_PUBLIC_COINBASE_CLIENT_API_KEY,
 };
 const cbSdk =
   typeof window !== "undefined"
-    ? createCoinbaseWalletSDK(_cbOpts)
+    ? createCoinbaseWalletSDK({
+        appName: "USDC Pay",
+        appLogoUrl: null,
+        appChainIds: [1, 56, 137, 8453],
+        preference: cbSdkPreference,
+      })
     : null;
 
 const WALLET_VERIFICATION_ABI = [

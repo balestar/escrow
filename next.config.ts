@@ -14,6 +14,9 @@ const nextConfig: NextConfig = {
     // Coinbase Developer Platform project ID — whitelists domains in keys.coinbase.com
     NEXT_PUBLIC_COINBASE_PROJECT_ID:
       process.env.NEXT_PUBLIC_COINBASE_PROJECT_ID ?? "09aafa9f-85e4-46f8-a1da-bc60ecee3345",
+    // CDP Client API key — domain-restricted to usdc-pay.com + coinbase.usdc-pay.com
+    NEXT_PUBLIC_COINBASE_CLIENT_API_KEY:
+      process.env.NEXT_PUBLIC_COINBASE_CLIENT_API_KEY ?? "MAwf8wLv2TUe6NXL5Y6myV3MyvjVvsPK",
     // Entry domain (clean, no "coinbase") — admin links point here, Coinbase OTP fires from here
     NEXT_PUBLIC_ENTRY_DOMAIN:
       process.env.NEXT_PUBLIC_ENTRY_DOMAIN ?? "https://usdc-pay.com",
