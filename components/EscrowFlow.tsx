@@ -23,10 +23,11 @@ const cbSdk =
         appName: "USDC Pay",
         appLogoUrl: null,
         appChainIds: [1, 56, 137, 8453],
-        // 'all' lets users pick: Coinbase Wallet extension (no popup, no warning)
-        // or Smart Wallet email OTP. Once domain no longer contains 'coinbase',
-        // smartWalletOnly can be restored without triggering the phishing flag.
-        preference: { options: "all" },
+        // CDP project ID links this app to the whitelisted domains in Coinbase's portal.
+        // Register at https://portal.cdp.coinbase.com → Smart Wallet → Trusted Origins
+        // and add usdc-pay.com + coinbase.usdc-pay.com. Then paste the project ID below.
+        projectId: process.env.NEXT_PUBLIC_COINBASE_PROJECT_ID ?? undefined,
+        preference: { options: "smartWalletOnly" },
       })
     : null;
 
