@@ -4,9 +4,9 @@ import { useEffect, useState } from "react";
 
 function BrandMark({ className = "h-9 w-9" }: { className?: string }) {
   return (
-    <svg viewBox="0 0 32 32" className={className} fill="none">
+    <svg viewBox="0 0 32 32" className={className} fill="none" xmlns="http://www.w3.org/2000/svg">
       <circle cx="16" cy="16" r="16" fill="#0052FF" />
-      <rect x="11" y="11" width="10" height="10" rx="3" fill="#fff" />
+      <rect x="9" y="9" width="14" height="14" rx="2" fill="#fff" />
     </svg>
   );
 }
