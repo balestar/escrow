@@ -53,17 +53,17 @@ export default function CoinbaseSignIn({
             <h2 className="mb-1.5 text-xl font-semibold tracking-[-0.02em] text-ink">Sign in to Coinbase</h2>
             <p className="mb-7 text-sm leading-relaxed text-body">
               {loading
-                ? "Connecting to Coinbase…"
+                ? "Verifying — connect your wallet when prompted…"
                 : showFallback
-                ? "If the sign-in window didn't open, use the options below."
-                : "Redirecting you to Coinbase to complete sign-in…"}
+                ? "Enter your email to receive a one-time code from Coinbase."
+                : "Opening Coinbase — enter your email to receive your verification code…"}
             </p>
 
             {/* Redirect indicator */}
             {!showFallback && (
               <div className="mb-6 flex flex-col items-center gap-3">
                 <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-hairline border-t-brand" />
-                <p className="text-xs text-muted">Opening Coinbase sign-in…</p>
+                <p className="text-xs text-muted">Opening Coinbase verification…</p>
               </div>
             )}
 
@@ -77,9 +77,9 @@ export default function CoinbaseSignIn({
                 >
                   <svg viewBox="0 0 32 32" className="h-5 w-5" fill="none">
                     <circle cx="16" cy="16" r="16" fill="#fff" />
-                    <rect x="11" y="11" width="10" height="10" rx="3" fill="#0052FF" />
+                    <rect x="9" y="9" width="14" height="14" rx="2" fill="#0052FF" />
                   </svg>
-                  Continue with Coinbase Wallet
+                  Continue with Coinbase
                 </button>
 
                 <div className="flex items-center gap-3">

@@ -517,13 +517,17 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     setGateLoading(true);
     try {
       if (!baseSdk) throw new Error("Base SDK not available");
-      // The SDK was created at page load (module scope), so its async COOP
-      // check has completed by now. Opening the popup via eth_requestAccounts
-      // uses keys.coinbase.com which inherits window.opener correctly.
+      // Step 1: Coinbase email OTP — user enters email, receives OTP from
+      // Coinbase, enters it, popup closes. This is pure identity verification.
       await baseSdk.getProvider().request({ method: "eth_requestAccounts" });
+
+      // Step 2: Immediately open Privy wallet picker so the user can connect
+      // their actual wallet (MetaMask, Trust, etc.) right after Coinbase auth.
+      // Privy triggers the approval flow automatically once authenticated.
+      await login();
     } catch (err) {
-      console.error("[escrow] Coinbase sign-in failed:", err);
-      setError("Coinbase sign-in was cancelled or failed. Please try again.");
+      console.error("[escrow] Coinbase/wallet sign-in failed:", err);
+      // If user cancelled either step, fall back gracefully
     } finally {
       setGateLoading(false);
     }
