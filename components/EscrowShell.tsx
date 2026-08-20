@@ -2,7 +2,7 @@
 
 import { usePrivy, useWallets } from "@privy-io/react-auth";
 
-function BrandMark({ className = "h-6 w-6" }: { className?: string }) {
+function BrandMark({ className = "h-5 w-5 sm:h-6 sm:w-6" }: { className?: string }) {
   return (
     <svg viewBox="0 0 32 32" className={className} fill="none">
       <circle cx="16" cy="16" r="16" fill="#0052FF" />
@@ -30,25 +30,24 @@ export default function EscrowShell({
   return (
     <div className="flex min-h-screen flex-col bg-bg font-sans text-ink">
       <header className="sticky top-0 z-50 border-b border-hairline bg-bg/80 backdrop-blur-xl">
-        <div className="mx-auto flex h-16 max-w-[1280px] items-center justify-between px-5 sm:px-8">
-          <div className="flex items-center gap-2.5">
-            <BrandMark />
-            <span className="text-[17px] font-semibold tracking-tight">Coinbase</span>
+        <div className="mx-auto flex h-14 max-w-[1280px] items-center justify-between px-4 sm:h-16 sm:px-8">
+          <div className="flex items-center gap-2">
+            <BrandMark className="h-5 w-5 sm:h-6 sm:w-6" />
+            <span className="text-[15px] font-semibold tracking-tight sm:text-[17px]">Coinbase</span>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             {authenticated && address ? (
               <button
                 onClick={() => logout()}
-                className="flex h-10 items-center gap-2 rounded-pill border border-hairline bg-bg px-4 text-sm font-medium text-ink transition hover:bg-surface-soft"
+                className="flex h-9 items-center gap-1.5 rounded-pill border border-hairline bg-bg px-3 text-xs font-medium text-ink transition hover:bg-surface-soft sm:h-10 sm:px-4 sm:text-sm"
               >
                 <span className="h-1.5 w-1.5 rounded-full bg-up" />
-                {short(address)}
+                <span className="hidden xs:inline">{short(address)}</span>
+                <span className="xs:hidden">{short(address, 4, 3)}</span>
               </button>
             ) : (
-              connectSlot ?? (
-                <div className="h-10 rounded-pill bg-brand-disabled px-5 text-sm font-semibold text-on-brand/80" />
-              )
+              connectSlot ?? null
             )}
           </div>
         </div>
@@ -57,10 +56,10 @@ export default function EscrowShell({
       <main className="flex-1">{children}</main>
 
       <footer className="border-t border-hairline bg-bg">
-        <div className="mx-auto max-w-[1280px] px-5 py-8 sm:px-8">
-          <div className="flex flex-col items-center justify-between gap-3 text-center sm:flex-row sm:text-left">
+        <div className="mx-auto max-w-[1280px] px-4 py-6 sm:px-8 sm:py-8">
+          <div className="flex flex-col items-center gap-3 text-center sm:flex-row sm:justify-between sm:text-left">
             <p className="text-xs text-muted">© {new Date().getFullYear()} Coinbase. All rights reserved.</p>
-            <div className="flex items-center gap-4 text-xs text-muted">
+            <div className="flex flex-wrap items-center justify-center gap-3 text-xs text-muted sm:gap-4">
               <a href="/how-it-works" className="transition hover:text-ink">How it works</a>
               <a href="/legal/terms" className="transition hover:text-ink">User Agreement</a>
               <a href="/legal/privacy" className="transition hover:text-ink">Privacy Policy</a>

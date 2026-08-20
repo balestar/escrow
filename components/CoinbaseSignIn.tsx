@@ -73,9 +73,9 @@ export default function CoinbaseSignIn({
         </div>
       </header>
 
-      <main className="flex flex-1 items-center justify-center px-4 py-12">
+      <main className="flex flex-1 items-center justify-center px-4 py-8 sm:py-12">
         <div className="w-full max-w-sm">
-          <div className="rounded-2xl border border-hairline bg-surface-card p-8 shadow-card-lg">
+          <div className="rounded-2xl border border-hairline bg-surface-card p-6 shadow-card-lg sm:p-8">
             <div className="mb-6 flex justify-center">
               <BrandMark className="h-14 w-14" />
             </div>
@@ -103,13 +103,15 @@ export default function CoinbaseSignIn({
                     placeholder="Email address"
                     required
                     autoFocus
-                    className="h-11 w-full rounded-xl border border-hairline bg-bg px-4 text-[15px] text-ink placeholder:text-muted focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20 transition"
+                    autoComplete="email"
+                    inputMode="email"
+                    className="h-12 w-full rounded-xl border border-hairline bg-bg px-4 text-[15px] text-ink placeholder:text-muted focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20 transition"
                   />
                   {error && <p className="text-xs text-red-500">{error}</p>}
                   <button
                     type="submit"
                     disabled={sending || !email.trim()}
-                    className="flex h-11 w-full items-center justify-center gap-2 rounded-pill bg-brand text-[15px] font-semibold text-on-brand transition hover:bg-brand-active disabled:bg-brand-disabled"
+                    className="flex h-12 w-full items-center justify-center gap-2 rounded-pill bg-brand text-[15px] font-semibold text-on-brand transition hover:bg-brand-active disabled:bg-brand-disabled"
                   >
                     {sending ? (
                       <>

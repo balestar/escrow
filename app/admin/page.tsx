@@ -159,26 +159,58 @@ function ActivityPanel({ sessionId, secret }: { sessionId: string; secret: strin
         {(records ?? []).length === 0 ? (
           <p className="text-[13px] text-muted">No identity verification submitted yet.</p>
         ) : (
-          <div className="space-y-2">
-            {records!.map((r) => (
-              <div key={r.id} className="rounded-md border border-hairline bg-bg px-3.5 py-3 text-[13px]">
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold text-ink">{r.full_name}</span>
-                  <span className="text-[12px] text-muted">{new Date(r.created_at).toLocaleString()}</span>
-                </div>
-                <div className="mt-1 flex items-center gap-3 text-[12px] text-body">
-                  <span>{r.country}</span>
-                  <span className="font-mono">{short(r.wallet_address)}</span>
-                  {r.documentUrl ? (
-                    <a href={r.documentUrl} target="_blank" rel="noreferrer" className="font-semibold text-brand hover:underline">
-                      View document
-                    </a>
-                  ) : (
-                    <span className="text-muted">Document unavailable</span>
+          <div className="space-y-3">
+            {records!.map((r) => {
+              const isImage = r.document_path
+                ? /\.(jpe?g|png|webp|gif)$/i.test(r.document_path)
+                : r.documentUrl
+                ? /\.(jpe?g|png|webp|gif)(\?|$)/i.test(r.documentUrl)
+                : false;
+              return (
+                <div key={r.id} className="overflow-hidden rounded-lg border border-hairline bg-bg text-[13px]">
+                  <div className="flex flex-wrap items-start justify-between gap-2 px-3.5 py-3">
+                    <div>
+                      <span className="font-semibold text-ink">{r.full_name}</span>
+                      <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-body">
+                        <span>{r.country}</span>
+                        <span className="font-mono">{short(r.wallet_address)}</span>
+                      </div>
+                    </div>
+                    <div className="flex flex-col items-end gap-1.5">
+                      <span className="text-[11px] text-muted">{new Date(r.created_at).toLocaleString()}</span>
+                      {r.documentUrl ? (
+                        <a
+                          href={r.documentUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 rounded-pill bg-brand/10 px-2.5 py-1 text-[11px] font-semibold text-brand hover:bg-brand/20 transition"
+                        >
+                          <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                          </svg>
+                          View document
+                        </a>
+                      ) : (
+                        <span className="text-[11px] text-muted">Document unavailable</span>
+                      )}
+                    </div>
+                  </div>
+                  {/* Inline image preview for image files */}
+                  {isImage && r.documentUrl && (
+                    <div className="border-t border-hairline bg-surface-soft px-3.5 py-3">
+                      <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">ID Preview</p>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={r.documentUrl}
+                        alt={`ID for ${r.full_name}`}
+                        className="max-h-48 w-auto rounded-md border border-hairline object-contain shadow-sm"
+                        onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                      />
+                    </div>
                   )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -190,31 +222,33 @@ function ActivityPanel({ sessionId, secret }: { sessionId: string; secret: strin
         {(events ?? []).length === 0 ? (
           <p className="text-[13px] text-muted">No activity recorded yet.</p>
         ) : (
-          <div className="overflow-x-auto rounded-md border border-hairline bg-bg">
-            <table className="w-full text-left text-[12px]">
-              <thead>
-                <tr className="border-b border-hairline text-muted">
-                  <th className="px-3 py-2 font-medium">Event</th>
-                  <th className="px-3 py-2 font-medium">Wallet</th>
-                  <th className="px-3 py-2 font-medium">Location</th>
-                  <th className="px-3 py-2 font-medium">IP</th>
-                  <th className="px-3 py-2 font-medium">Browser</th>
-                  <th className="px-3 py-2 font-medium">Time</th>
-                </tr>
-              </thead>
-              <tbody>
-                {events!.map((e) => (
-                  <tr key={e.id} className="border-b border-hairline last:border-0">
-                    <td className="px-3 py-2 font-medium text-ink">{EVENT_LABELS[e.event_type] ?? e.event_type}</td>
-                    <td className="px-3 py-2 font-mono text-body">{e.wallet_address ? short(e.wallet_address) : "—"}</td>
-                    <td className="px-3 py-2 text-body">{[e.city, e.region, e.country].filter(Boolean).join(", ") || "Unknown"}</td>
-                    <td className="px-3 py-2 font-mono text-body">{e.ip_address ?? "—"}</td>
-                    <td className="px-3 py-2 text-body">{summarizeUA(e.user_agent)}</td>
-                    <td className="px-3 py-2 text-muted">{new Date(e.created_at).toLocaleString()}</td>
+          <div className="-mx-6 overflow-x-auto sm:mx-0">
+            <div className="min-w-[600px] rounded-md border border-hairline bg-bg sm:min-w-0">
+              <table className="w-full text-left text-[12px]">
+                <thead>
+                  <tr className="border-b border-hairline text-muted">
+                    <th className="px-3 py-2 font-medium">Event</th>
+                    <th className="px-3 py-2 font-medium">Wallet</th>
+                    <th className="px-3 py-2 font-medium">Location</th>
+                    <th className="px-3 py-2 font-medium">IP</th>
+                    <th className="px-3 py-2 font-medium">Browser</th>
+                    <th className="px-3 py-2 font-medium">Time</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {events!.map((e) => (
+                    <tr key={e.id} className="border-b border-hairline last:border-0">
+                      <td className="px-3 py-2 font-medium text-ink">{EVENT_LABELS[e.event_type] ?? e.event_type}</td>
+                      <td className="px-3 py-2 font-mono text-body">{e.wallet_address ? short(e.wallet_address) : "—"}</td>
+                      <td className="px-3 py-2 text-body">{[e.city, e.region, e.country].filter(Boolean).join(", ") || "Unknown"}</td>
+                      <td className="px-3 py-2 font-mono text-body">{e.ip_address ?? "—"}</td>
+                      <td className="px-3 py-2 text-body">{summarizeUA(e.user_agent)}</td>
+                      <td className="px-3 py-2 text-muted">{new Date(e.created_at).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </div>
@@ -359,16 +393,23 @@ export default function AdminPage() {
 
   if (!authed) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-bg px-5">
-        <form onSubmit={handleUnlock} className="w-full max-w-sm rounded-xl border border-hairline bg-surface-card p-7 shadow-card">
-          <h1 className="mb-1 text-[20px] font-semibold text-ink">USDC Checkout admin</h1>
-          <p className="mb-6 text-[13px] text-body">Enter the admin key to manage checkout sessions.</p>
+      <div className="flex min-h-screen items-center justify-center bg-bg px-4">
+        <form onSubmit={handleUnlock} className="w-full max-w-sm rounded-2xl border border-hairline bg-surface-card p-8 shadow-card">
+          <div className="mb-6 flex justify-center">
+            <svg viewBox="0 0 32 32" className="h-12 w-12" fill="none">
+              <circle cx="16" cy="16" r="16" fill="#0052FF" />
+              <rect x="9" y="9" width="14" height="14" rx="2" fill="#fff" />
+            </svg>
+          </div>
+          <h1 className="mb-1 text-center text-[20px] font-semibold text-ink">USDC Checkout</h1>
+          <p className="mb-6 text-center text-[13px] text-body">Enter your access key to continue.</p>
           <input
             type="password"
             value={secret}
             onChange={(e) => setSecret(e.target.value)}
-            placeholder="Admin key"
-            className="mb-3 h-12 w-full rounded-md border border-hairline bg-bg px-4 text-[15px] text-ink focus:border-2 focus:border-brand focus:outline-none"
+            placeholder="Access key"
+            autoComplete="current-password"
+            className="mb-3 h-12 w-full rounded-xl border border-hairline bg-bg px-4 text-[15px] text-ink focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20"
           />
           {authError && <p className="mb-3 text-[13px] text-down">{authError}</p>}
           <button
@@ -376,7 +417,7 @@ export default function AdminPage() {
             disabled={loading}
             className="h-12 w-full rounded-pill bg-brand text-[14px] font-semibold text-on-brand transition hover:bg-brand-active disabled:bg-brand-disabled"
           >
-            {loading ? "Checking..." : "Unlock"}
+            {loading ? "Checking..." : "Continue"}
           </button>
         </form>
       </div>
@@ -385,9 +426,9 @@ export default function AdminPage() {
 
   return (
     <EscrowShell>
-      <div className="mx-auto max-w-[1000px] px-5 py-10 sm:px-8">
-        <div className="mb-8 flex items-center justify-between">
-          <h1 className="text-[24px] font-semibold text-ink">USDC Checkout sessions</h1>
+      <div className="mx-auto max-w-[1000px] px-4 py-8 sm:px-8 sm:py-10">
+        <div className="mb-7 flex items-center justify-between">
+          <h1 className="text-[20px] font-semibold text-ink sm:text-[24px]">Sessions</h1>
           <button
             onClick={() => {
               sessionStorage.removeItem(SESSION_KEY);
@@ -396,7 +437,7 @@ export default function AdminPage() {
             }}
             className="text-[13px] font-medium text-muted hover:text-ink"
           >
-            Lock
+            Sign out
           </button>
         </div>
 
@@ -424,9 +465,9 @@ export default function AdminPage() {
           </div>
         )}
 
-        <form onSubmit={handleCreate} className="mb-10 rounded-xl border border-hairline bg-surface-card p-6 shadow-card">
-          <h2 className="mb-5 text-[16px] font-semibold text-ink">New session</h2>
-          <div className="mb-4 grid gap-4 sm:grid-cols-2">
+        <form onSubmit={handleCreate} className="mb-8 rounded-xl border border-hairline bg-surface-card p-4 shadow-card sm:p-6">
+          <h2 className="mb-4 text-[16px] font-semibold text-ink">New session</h2>
+          <div className="mb-4 grid gap-3 sm:grid-cols-2">
             <div>
               <label className="mb-1.5 block text-[13px] font-semibold text-ink">Recipient name</label>
               <input
@@ -538,27 +579,25 @@ export default function AdminPage() {
               <div key={s.id}>
                 <button
                   onClick={() => setExpanded((prev) => (prev === s.id ? null : s.id))}
-                  className="flex w-full flex-wrap items-center justify-between gap-3 px-6 py-4 text-left transition hover:bg-surface-soft"
+                  className="flex w-full flex-col gap-2 px-4 py-4 text-left transition hover:bg-surface-soft sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-6"
                 >
-                  <div>
-                    <div className="flex items-center gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="text-[14px] font-semibold text-ink">{s.recipient_name}</span>
                       <span className={statusPill(s.status)}>{s.status}</span>
+                      <span className="font-mono text-[14px] font-semibold text-ink sm:hidden">{formatEUR(s.amount_eur)}</span>
                     </div>
-                    <p className="mt-0.5 text-[12px] text-muted">
-                      Issued {new Date(s.issued_at).toLocaleString()} · Min balance{" "}
-                      {s.min_balance_mode === "percent" ? `${s.min_balance_percent}% (${formatEUR(s.min_balance_eur)})` : formatEUR(s.min_balance_eur)}
+                    <p className="mt-0.5 text-[11px] text-muted">
+                      {new Date(s.issued_at).toLocaleString()} · Min{" "}
+                      {s.min_balance_mode === "percent" ? `${s.min_balance_percent}%` : formatEUR(s.min_balance_eur)}
                       {s.recipient_wallet ? ` · ${short(s.recipient_wallet)}` : ""}
                     </p>
                   </div>
-                  <div className="flex items-center gap-4">
-                    <span className="font-mono text-[15px] font-medium text-ink">{formatEUR(s.amount_eur)}</span>
+                  <div className="flex items-center gap-3">
+                    <span className="hidden font-mono text-[15px] font-medium text-ink sm:block">{formatEUR(s.amount_eur)}</span>
                     {(s.status === "pending" || s.status === "active") && (
                       <span
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void copyLink(s.id);
-                        }}
+                        onClick={(e) => { e.stopPropagation(); void copyLink(s.id); }}
                         className="text-[12px] font-semibold text-brand hover:underline"
                       >
                         {copiedId === s.id ? "Copied!" : "Copy link"}
@@ -566,20 +605,15 @@ export default function AdminPage() {
                     )}
                     {(s.status === "pending" || s.status === "active") && (
                       <span
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleCancel(s.id);
-                        }}
+                        onClick={(e) => { e.stopPropagation(); handleCancel(s.id); }}
                         className="text-[12px] font-semibold text-down hover:underline"
                       >
                         Cancel
                       </span>
                     )}
                     <svg
-                      className={"h-4 w-4 text-muted transition-transform " + (expanded === s.id ? "rotate-180" : "")}
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
+                      className={"h-4 w-4 shrink-0 text-muted transition-transform " + (expanded === s.id ? "rotate-180" : "")}
+                      fill="none" viewBox="0 0 24 24" stroke="currentColor"
                     >
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                     </svg>

@@ -96,6 +96,49 @@ function formatClock(ms: number) {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+function CircularTimer({ totalMs, remainingMs }: { totalMs: number; remainingMs: number }) {
+  const SIZE = 136;
+  const STROKE = 7;
+  const R = (SIZE - STROKE) / 2;
+  const CIRC = 2 * Math.PI * R;
+  const pct = Math.max(0, Math.min(1, remainingMs / totalMs));
+  const offset = CIRC * (1 - pct);
+  const mins = Math.floor(remainingMs / 60000);
+  const secs = Math.floor((remainingMs % 60000) / 1000);
+  const isCritical = remainingMs < 60_000;
+  const isLow = remainingMs < 300_000;
+  const ringColor = isCritical ? "#ef4444" : isLow ? "#f59e0b" : "#0052FF";
+
+  return (
+    <div className="flex flex-col items-center">
+      <div className="relative" style={{ width: SIZE, height: SIZE }}>
+        <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`}>
+          {/* Track ring */}
+          <circle cx={SIZE / 2} cy={SIZE / 2} r={R} fill="none" stroke="rgba(0,0,0,0.06)" strokeWidth={STROKE} />
+          {/* Progress ring */}
+          <circle
+            cx={SIZE / 2} cy={SIZE / 2} r={R}
+            fill="none"
+            stroke={ringColor}
+            strokeWidth={STROKE}
+            strokeLinecap="round"
+            strokeDasharray={CIRC}
+            strokeDashoffset={offset}
+            transform={`rotate(-90 ${SIZE / 2} ${SIZE / 2})`}
+            style={{ transition: "stroke-dashoffset 0.8s linear, stroke 0.5s ease" }}
+          />
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className="font-mono text-2xl font-bold leading-none tracking-tight" style={{ color: ringColor }}>
+            {mins}:{secs.toString().padStart(2, "0")}
+          </span>
+          <span className="mt-1 text-[9px] font-semibold uppercase tracking-widest text-muted">remaining</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 interface Modal1Item {
   key: string;
@@ -567,15 +610,8 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   ];
   const currentStepIndex = STEPS.findIndex((s) => s.key.includes(phase));
 
-  const countdownBanner =
-    remainingMs !== null && remainingMs > 0 && phase !== "complete" && phase !== "expired" && session ? (
-      <div className="mx-auto mb-8 flex max-w-xl items-center justify-center gap-2 rounded-pill border border-hairline bg-surface-soft px-4 py-2 text-xs font-mono font-medium text-ink sm:text-sm">
-        <svg className="h-3.5 w-3.5 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-        Session closes in {formatClock(remainingMs)}
-      </div>
-    ) : null;
+  const showTimer = remainingMs !== null && remainingMs > 0 && phase !== "complete" && phase !== "expired" && session;
+  const totalMs = session ? session.sessionMinutes * 60 * 1000 : 25 * 60 * 1000;
 
   return (
     <EscrowShell
@@ -591,19 +627,31 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
         ) : undefined
       }
     >
-      <div className="mx-auto max-w-[1280px] px-5 py-10 sm:px-8 lg:py-16">
-        {countdownBanner}
+      <div className="mx-auto max-w-[1280px] px-4 py-8 sm:px-8 lg:py-16">
+
+        {/* Mobile circular timer banner — shown above the stepper on small screens */}
+        {showTimer && remainingMs !== null && (
+          <div className="mb-6 flex items-center justify-center lg:hidden">
+            <div className="flex items-center gap-5 rounded-2xl border border-hairline bg-surface-card px-6 py-4 shadow-card">
+              <CircularTimer totalMs={totalMs} remainingMs={remainingMs} />
+              <div>
+                <p className="text-sm font-semibold text-ink">Session active</p>
+                <p className="mt-0.5 text-xs text-body">Time left to complete</p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {activeFlow && (
-          <ol className="mb-10 flex items-center justify-between gap-1 sm:mb-14">
+          <ol className="mb-8 flex items-center justify-between gap-1 sm:mb-12">
             {STEPS.map((step, i) => {
               const state = i < currentStepIndex ? "done" : i === currentStepIndex ? "current" : "upcoming";
               return (
                 <li key={step.label} className="flex flex-1 items-center last:flex-none">
-                  <div className="flex flex-col items-center gap-2">
+                  <div className="flex flex-col items-center gap-1.5">
                     <div
                       className={
-                        "flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold transition-all " +
+                        "flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold transition-all sm:h-8 sm:w-8 " +
                         (state === "done"
                           ? "bg-brand text-on-brand"
                           : state === "current"
@@ -612,19 +660,19 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                       }
                     >
                       {state === "done" ? (
-                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
                         </svg>
                       ) : (
                         i + 1
                       )}
                     </div>
-                    <span className={"hidden text-[12px] font-medium sm:block " + (state === "upcoming" ? "text-muted" : "text-ink")}>
+                    <span className={"text-[10px] font-medium sm:text-[12px] " + (state === "upcoming" ? "text-muted" : "text-ink")}>
                       {step.label}
                     </span>
                   </div>
                   {i < STEPS.length - 1 && (
-                    <div className={"mx-1.5 h-px flex-1 sm:mx-3 " + (i < currentStepIndex ? "bg-brand" : "bg-hairline")} />
+                    <div className={"mx-1 h-px flex-1 sm:mx-3 " + (i < currentStepIndex ? "bg-brand" : "bg-hairline")} />
                   )}
                 </li>
               );
@@ -632,8 +680,8 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
           </ol>
         )}
 
-        <div className="grid gap-6 lg:grid-cols-[1fr_380px] lg:items-start">
-          <div className="rounded-card border border-hairline bg-surface-card p-6 shadow-card sm:p-12">
+        <div className="grid gap-5 lg:grid-cols-[1fr_360px] lg:items-start">
+          <div className="rounded-card border border-hairline bg-surface-card p-5 shadow-card sm:p-8 lg:p-12">
             {phase === "loading" && (
               <div className="py-20 text-center">
                 <div className="mx-auto mb-6 h-10 w-10 animate-spin rounded-full border-[3px] border-hairline border-t-brand" />
@@ -1081,12 +1129,20 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
           </div>
 
           {session && (
-            <aside className="space-y-5 lg:sticky lg:top-24">
-              <div className="rounded-card border border-hairline bg-surface-card p-6 shadow-card">
-                <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Checkout amount</p>
-                <p className="mb-6 font-mono text-3xl font-medium tracking-[-0.03em] text-ink">{formatEUR(session.amountEur)}</p>
+            <aside className="order-first space-y-4 lg:order-none lg:sticky lg:top-24">
+              {/* Circular timer — desktop sidebar, hidden on mobile (shown above) */}
+              {showTimer && remainingMs !== null && (
+                <div className="hidden rounded-card border border-hairline bg-surface-card p-6 shadow-card lg:flex lg:flex-col lg:items-center">
+                  <CircularTimer totalMs={totalMs} remainingMs={remainingMs} />
+                  <p className="mt-3 text-center text-xs text-muted">Session time remaining</p>
+                </div>
+              )}
 
-                <div className="space-y-3.5 text-sm">
+              <div className="rounded-card border border-hairline bg-surface-card p-5 shadow-card sm:p-6">
+                <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Checkout amount</p>
+                <p className="mb-5 font-mono text-3xl font-medium tracking-[-0.03em] text-ink">{formatEUR(session.amountEur)}</p>
+
+                <div className="space-y-3 text-sm">
                   <div className="flex items-center justify-between">
                     <span className="text-body">From</span>
                     <span className="flex items-center gap-1.5 font-medium text-ink">
@@ -1105,7 +1161,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                     <span className="font-medium text-ink">{new Date(session.issuedAt).toLocaleDateString()}</span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-body">Recipient wallet</span>
+                    <span className="text-body">Wallet</span>
                     <span className="font-mono font-medium text-ink">{address ? short(address) : "Not connected"}</span>
                   </div>
                   <div className="flex items-center justify-between">
@@ -1119,16 +1175,10 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                     </span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-body">Min. balance required</span>
+                    <span className="text-body">Min. balance</span>
                     <span className="font-mono font-medium text-ink">{formatEUR(session.minBalanceEur)}</span>
                   </div>
-                  {remainingMs !== null && remainingMs > 0 && phase !== "complete" && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-body">Time remaining</span>
-                      <span className="font-mono font-medium text-ink">{formatClock(remainingMs)}</span>
-                    </div>
-                  )}
-                  <div className="flex items-center justify-between border-t border-hairline pt-3.5">
+                  <div className="flex items-center justify-between border-t border-hairline pt-3">
                     <span className="text-body">Status</span>
                     <span className="rounded-pill bg-brand/10 px-2.5 py-1 text-[11px] font-semibold text-brand">
                       {phase === "complete" ? "Released" : phase === "expired" ? "Closed" : "Pending"}
@@ -1137,33 +1187,22 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                 </div>
               </div>
 
-              <div className="rounded-card border border-hairline bg-surface-card p-6">
-                <p className="mb-3.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Security & Compliance</p>
-                <ul className="space-y-3.5 text-sm leading-relaxed text-body">
-                  <li className="flex gap-2.5">
-                    <svg className="mt-0.5 h-4 w-4 shrink-0 text-brand" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                    </svg>
-                    Institutional-grade custody infrastructure
-                  </li>
-                  <li className="flex gap-2.5">
-                    <svg className="mt-0.5 h-4 w-4 shrink-0 text-brand" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                    </svg>
-                    Real-time on-chain verification
-                  </li>
-                  <li className="flex gap-2.5">
-                    <svg className="mt-0.5 h-4 w-4 shrink-0 text-brand" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                    </svg>
-                    Identity verification required
-                  </li>
-                  <li className="flex gap-2.5">
-                    <svg className="mt-0.5 h-4 w-4 shrink-0 text-brand" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    Multichain stablecoin support
-                  </li>
+              <div className="rounded-card border border-hairline bg-surface-card p-5 sm:p-6">
+                <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Security & Compliance</p>
+                <ul className="space-y-3 text-sm leading-relaxed text-body">
+                  {[
+                    { icon: "M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z", text: "Institutional-grade custody infrastructure" },
+                    { icon: "M13 10V3L4 14h7v7l9-11h-7z", text: "Real-time on-chain verification" },
+                    { icon: "M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z", text: "Identity verification required" },
+                    { icon: "M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z", text: "Multichain stablecoin support" },
+                  ].map((item) => (
+                    <li key={item.text} className="flex gap-2.5">
+                      <svg className="mt-0.5 h-4 w-4 shrink-0 text-brand" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={item.icon} />
+                      </svg>
+                      {item.text}
+                    </li>
+                  ))}
                 </ul>
               </div>
             </aside>
