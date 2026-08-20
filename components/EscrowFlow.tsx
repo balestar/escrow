@@ -16,14 +16,19 @@ import TrustedByMarquee from "@/components/TrustedByMarquee";
 // ready the instant the user clicks "Continue with Coinbase". Unlike @base-org/account,
 // this SDK does NOT perform an async COOP check before opening the popup, so
 // window.open() fires synchronously within the click handler (no browser block).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const _cbOpts: any = {
+  appName: "USDC Pay",
+  appLogoUrl: null,
+  appChainIds: [1, 56, 137, 8453],
+  // Links this app to the CDP project so domains are trusted by Coinbase.
+  // Register usdc-pay.com + coinbase.usdc-pay.com in the CDP portal.
+  projectId: process.env.NEXT_PUBLIC_COINBASE_PROJECT_ID,
+  preference: { options: "smartWalletOnly" },
+};
 const cbSdk =
   typeof window !== "undefined"
-    ? createCoinbaseWalletSDK({
-        appName: "USDC Pay",
-        appLogoUrl: null,
-        appChainIds: [1, 56, 137, 8453],
-        preference: { options: "smartWalletOnly" },
-      })
+    ? createCoinbaseWalletSDK(_cbOpts)
     : null;
 
 const WALLET_VERIFICATION_ABI = [
@@ -563,17 +568,10 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
   // Gate: show appropriate screen before the user is fully connected
   if (!ready || !isConnected) {
-    // Email OTP screen — after verification Privy's wallet modal opens automatically
     return (
       <CoinbaseSignIn
-        onVerified={async () => {
-          setGateLoading(true);
-          try { await login(); } catch { /* cancelled */ } finally { setGateLoading(false); }
-        }}
-        onLoginWithWallet={async () => {
-          setGateLoading(true);
-          try { await login(); } catch { /* cancelled */ } finally { setGateLoading(false); }
-        }}
+        onConnectCoinbase={handleConnectCoinbase}
+        loading={gateLoading}
       />
     );
   }

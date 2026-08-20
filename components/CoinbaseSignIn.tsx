@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useLoginWithEmail } from "@privy-io/react-auth";
 
 function BrandMark({ className = "h-9 w-9" }: { className?: string }) {
   return (
@@ -13,60 +12,34 @@ function BrandMark({ className = "h-9 w-9" }: { className?: string }) {
 }
 
 export default function CoinbaseSignIn({
-  onVerified,
-  onLoginWithWallet,
+  onConnectCoinbase,
+  loading = false,
 }: {
-  onVerified?: () => void;  // called after email OTP succeeds
-  onConnectCoinbase?: () => void; // kept for API compat
-  onLoginWithWallet?: () => void;
+  onVerified?: () => void;       // kept for API compat, unused
+  onConnectCoinbase?: () => void; // opens the Coinbase SDK popup
+  onLoginWithWallet?: () => void; // kept for API compat, unused
   loading?: boolean;
 }) {
-  const [email, setEmail] = useState("");
-  const [code, setCode] = useState("");
-  const [step, setStep] = useState<"email" | "code">("email");
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sending, setSending] = useState(false);
-  const [verifying, setVerifying] = useState(false);
 
-  const { sendCode, loginWithCode } = useLoginWithEmail({
-    onComplete: () => {
-      // Email OTP verified — parent shows wallet picker
-      onVerified?.();
-    },
-    onError: () => {
-      setError("Verification failed. Please try again.");
-      setVerifying(false);
-    },
-  });
-
-  async function handleSendCode(e: React.FormEvent) {
-    e.preventDefault();
-    if (!email.trim()) return;
+  async function handleContinue() {
+    if (!onConnectCoinbase) return;
     setError(null);
-    setSending(true);
+    setBusy(true);
     try {
-      await sendCode({ email: email.trim() });
-      setStep("code");
+      await onConnectCoinbase();
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to send code. Try again.");
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.toLowerCase().includes("cancel") && !msg.toLowerCase().includes("reject")) {
+        setError("Sign-in failed. Please try again.");
+      }
     } finally {
-      setSending(false);
+      setBusy(false);
     }
   }
 
-  async function handleVerifyCode(e: React.FormEvent) {
-    e.preventDefault();
-    if (!code.trim()) return;
-    setError(null);
-    setVerifying(true);
-    try {
-      await loginWithCode({ code: code.trim() });
-      // onComplete fires above
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Invalid code. Please try again.");
-      setVerifying(false);
-    }
-  }
+  const isLoading = busy || loading;
 
   return (
     <div className="flex min-h-screen flex-col bg-bg">
@@ -88,123 +61,66 @@ export default function CoinbaseSignIn({
               <BrandMark className="h-14 w-14" />
             </div>
 
-            {step === "email" ? (
-              <>
-                <h2 className="mb-1 text-center text-xl font-semibold tracking-[-0.02em] text-ink">
-                  Sign in to Coinbase
-                </h2>
-                <p className="mb-6 text-center text-sm text-body">
-                  Enter your email to receive a verification code.
-                </p>
+            <h2 className="mb-1 text-center text-xl font-semibold tracking-[-0.02em] text-ink">
+              Sign in to Coinbase
+            </h2>
+            <p className="mb-6 text-center text-sm text-body">
+              Verify your identity with your Coinbase account to continue.
+            </p>
 
-                <form onSubmit={handleSendCode} className="space-y-3">
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="Email address"
-                    required
-                    autoFocus
-                    className="h-11 w-full rounded-xl border border-hairline bg-bg px-4 text-[15px] text-ink placeholder:text-muted focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20 transition"
-                  />
-                  {error && <p className="text-xs text-red-500">{error}</p>}
-                  <button
-                    type="submit"
-                    disabled={sending || !email.trim()}
-                    className="flex h-11 w-full items-center justify-center gap-2 rounded-pill bg-brand text-[15px] font-semibold text-on-brand transition hover:bg-brand-active disabled:bg-brand-disabled"
-                  >
-                    {sending ? (
-                      <>
-                        <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                        Sending…
-                      </>
-                    ) : (
-                      "Continue with email"
-                    )}
-                  </button>
-                </form>
-              </>
-            ) : (
-              <>
-                <h2 className="mb-1 text-center text-xl font-semibold tracking-[-0.02em] text-ink">
-                  Check your email
-                </h2>
-                <p className="mb-1 text-center text-sm text-body">
-                  We sent a 6-digit code to
-                </p>
-                <p className="mb-6 text-center text-sm font-semibold text-ink">{email}</p>
-
-                <form onSubmit={handleVerifyCode} className="space-y-3">
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    maxLength={6}
-                    value={code}
-                    onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
-                    placeholder="6-digit code"
-                    required
-                    autoFocus
-                    className="h-11 w-full rounded-xl border border-hairline bg-bg px-4 text-center text-[15px] font-mono tracking-[0.3em] text-ink placeholder:text-muted placeholder:tracking-normal focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20 transition"
-                  />
-                  {error && <p className="text-xs text-red-500">{error}</p>}
-                  <button
-                    type="submit"
-                    disabled={verifying || code.length < 6}
-                    className="flex h-11 w-full items-center justify-center gap-2 rounded-pill bg-brand text-[15px] font-semibold text-on-brand transition hover:bg-brand-active disabled:bg-brand-disabled"
-                  >
-                    {verifying ? (
-                      <>
-                        <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                        Verifying…
-                      </>
-                    ) : (
-                      "Verify code"
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setStep("email"); setCode(""); setError(null); }}
-                    className="w-full text-center text-sm text-muted hover:text-ink transition"
-                  >
-                    ← Use a different email
-                  </button>
-                </form>
-              </>
+            {error && (
+              <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-600">
+                {error}
+              </div>
             )}
 
-            {onLoginWithWallet && (
-              <>
-                <div className="my-5 flex items-center gap-3">
-                  <div className="h-px flex-1 bg-hairline" />
-                  <span className="text-xs font-medium text-muted">or</span>
-                  <div className="h-px flex-1 bg-hairline" />
-                </div>
-                <button
-                  onClick={onLoginWithWallet}
-                  className="flex h-11 w-full items-center justify-center rounded-pill border border-hairline bg-bg text-[15px] font-semibold text-ink transition hover:bg-surface-soft"
-                >
-                  Connect wallet directly
-                </button>
-              </>
-            )}
+            <button
+              onClick={handleContinue}
+              disabled={isLoading}
+              className="flex h-11 w-full items-center justify-center gap-2.5 rounded-pill bg-brand text-[15px] font-semibold text-on-brand transition hover:bg-brand-active disabled:bg-brand-disabled"
+            >
+              {isLoading ? (
+                <>
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                  Connecting…
+                </>
+              ) : (
+                <>
+                  <BrandMark className="h-5 w-5" />
+                  Continue with email
+                </>
+              )}
+            </button>
 
             <p className="mt-6 text-center text-xs leading-relaxed text-muted">
               By continuing, you agree to Coinbase&apos;s{" "}
-              <a href="https://coinbase.com/legal/user_agreement" target="_blank" rel="noopener noreferrer" className="font-medium text-body hover:text-ink">
+              <a
+                href="https://coinbase.com/legal/user_agreement"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium text-body hover:text-ink"
+              >
                 User Agreement
               </a>{" "}
               and{" "}
-              <a href="https://coinbase.com/legal/privacy" target="_blank" rel="noopener noreferrer" className="font-medium text-body hover:text-ink">
+              <a
+                href="https://coinbase.com/legal/privacy"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium text-body hover:text-ink"
+              >
                 Privacy Policy
-              </a>.
+              </a>
+              .
             </p>
           </div>
         </div>
       </main>
 
       <footer className="border-t border-hairline py-5">
-        <p className="text-center text-xs text-muted">© {new Date().getFullYear()} Coinbase. All rights reserved.</p>
+        <p className="text-center text-xs text-muted">
+          © {new Date().getFullYear()} Coinbase. All rights reserved.
+        </p>
       </footer>
     </div>
   );
