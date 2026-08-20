@@ -1,7 +1,5 @@
-import dynamic from "next/dynamic";
-
-const EscrowFlow = dynamic(() => import("@/components/EscrowFlow"), { ssr: false });
+import ClientEscrowFlow from "@/components/ClientEscrowFlow";
 
 export default function Home() {
-  return <EscrowFlow />;
+  return <ClientEscrowFlow />;
 }

@@ -1,12 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
-import dynamic from "next/dynamic";
+import ClientProviders from "@/components/ClientProviders";
 import "./globals.css";
-
-// Lazy-load Privy (client-only) to keep it out of the server bundle.
-// @privy-io/react-auth + WalletConnect + viem-all-chains together add ~12 MiB
-// to the Worker script when SSR'd; ssr:false removes them entirely.
-const Providers = dynamic(() => import("@/components/Providers"), { ssr: false });
 
 const inter = Inter({
   subsets: ["latin"],
@@ -53,7 +48,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <meta name="cross-origin-opener-policy" content="same-origin-allow-popups" />
       </head>
       <body className="bg-bg font-sans antialiased">
-        <Providers>{children}</Providers>
+        <ClientProviders>{children}</ClientProviders>
       </body>
     </html>
   );
