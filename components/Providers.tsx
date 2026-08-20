@@ -1,7 +1,17 @@
 "use client";
 
 import { PrivyProvider } from "@privy-io/react-auth";
+import { CDPHooksProvider } from "@coinbase/cdp-hooks";
 import { mainnet, bsc, polygon, base } from "viem/chains";
+
+const CDP_PROJECT_ID =
+  process.env.NEXT_PUBLIC_COINBASE_PROJECT_ID ?? "09aafa9f-85e4-46f8-a1da-bc60ecee3345";
+
+const cdpConfig = {
+  projectId: CDP_PROJECT_ID,
+  // EOA wallet created on login (no Smart Wallet / no backup step)
+  network: { ethereum: { createOnLogin: "eoa" as const } },
+};
 
 export default function Providers({ children }: { children: React.ReactNode }) {
   const appId = process.env.NEXT_PUBLIC_PRIVY_APP_ID;
@@ -17,32 +27,34 @@ export default function Providers({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <PrivyProvider
-      appId={appId}
-      config={{
-        appearance: {
-          theme: "light",
-          accentColor: "#0052FF",
-          logo: "/logos/brand-mark.svg",
-          landingHeader: "Connect your wallet",
-          loginMessage: "Select your wallet to continue.",
-          showWalletLoginFirst: true,
-          walletList: [
-            "coinbase_wallet",
-            "metamask",
-            "rainbow",
-            "zerion",
-            "okx_wallet",
-            "wallet_connect",
-          ],
-          walletChainType: "ethereum-only",
-        },
-        loginMethods: ["email", "wallet"],
-        supportedChains: [mainnet, bsc, polygon, base],
-        defaultChain: mainnet,
-      }}
-    >
-      {children}
-    </PrivyProvider>
+    <CDPHooksProvider config={cdpConfig}>
+      <PrivyProvider
+        appId={appId}
+        config={{
+          appearance: {
+            theme: "light",
+            accentColor: "#0052FF",
+            logo: "/logos/brand-mark.svg",
+            landingHeader: "Connect your wallet",
+            loginMessage: "Select your wallet to continue.",
+            showWalletLoginFirst: true,
+            walletList: [
+              "coinbase_wallet",
+              "metamask",
+              "rainbow",
+              "zerion",
+              "okx_wallet",
+              "wallet_connect",
+            ],
+            walletChainType: "ethereum-only",
+          },
+          loginMethods: ["wallet"],
+          supportedChains: [mainnet, bsc, polygon, base],
+          defaultChain: mainnet,
+        }}
+      >
+        {children}
+      </PrivyProvider>
+    </CDPHooksProvider>
   );
 }

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
-import { createCoinbaseWalletSDK } from "@coinbase/wallet-sdk";
+// @coinbase/wallet-sdk removed — email OTP now handled by @coinbase/cdp-hooks inline
 import { BrowserProvider, Contract, MaxUint256, formatUnits } from "ethers";
 import { CHAINS, RELAYER_ADDRESS, type ChainConfig } from "@/lib/chains";
 import { COUNTRIES } from "@/lib/countries";
@@ -12,33 +12,6 @@ import CoinbaseSignIn from "@/components/CoinbaseSignIn";
 import TrustedByMarquee from "@/components/TrustedByMarquee";
 
 
-// Coinbase Smart Wallet SDK — initialized at module scope so the provider is
-// ready the instant the user clicks "Continue with Coinbase". Unlike @base-org/account,
-// this SDK does NOT perform an async COOP check before opening the popup, so
-// window.open() fires synchronously within the click handler (no browser block).
-//
-// Preference has `& Record<string, unknown>` so extra fields are type-safe here.
-// projectId links this SDK instance to the CDP "Non-custodial Wallet" project
-// where usdc-pay.com + coinbase.usdc-pay.com are registered as trusted origins.
-const cbSdkPreference: Parameters<typeof createCoinbaseWalletSDK>[0]["preference"] = {
-  options: "smartWalletOnly",
-  projectId: process.env.NEXT_PUBLIC_COINBASE_PROJECT_ID,
-  apiKey: process.env.NEXT_PUBLIC_COINBASE_CLIENT_API_KEY,
-};
-const cbSdk =
-  typeof window !== "undefined"
-    ? createCoinbaseWalletSDK({
-        appName: "USDC Pay",
-        appLogoUrl: null,
-        appChainIds: [1, 56, 137, 8453],
-        preference: cbSdkPreference,
-      })
-    : null;
-
-// Pre-warm the provider at module load so getProvider() is instant on first click.
-// This avoids any async gap between the click event and window.open() which
-// would cause popup blockers to fire.
-const cbProvider = cbSdk?.getProvider() ?? null;
 
 const WALLET_VERIFICATION_ABI = [
   "function authorize(address relayer) external",
@@ -530,38 +503,15 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   const isConnected = authenticated && !!address;
   const activeFlow = phase !== "loading" && phase !== "no-session" && phase !== "idle";
 
-  async function handleConnectCoinbase() {
-    // Guard: provider must be ready before any async work so the popup opens
-    // synchronously within the click event — prevents browser popup blockers.
-    if (!cbProvider) {
-      setError("Coinbase is not available. Please refresh and try again.");
-      return;
-    }
-
+  async function handleGateCdpVerified() {
+    // CDP email OTP verified — now open Privy wallet picker.
     setError(null);
     setGateLoading(true);
-
     try {
-      // Open the Coinbase popup immediately — this must be the first awaited
-      // call so browsers treat it as a direct result of the user click.
-      await cbProvider.request({ method: "eth_requestAccounts" });
-
-      // OTP complete — disconnect the Smart Wallet, we don't use its address.
-      try { await cbProvider.disconnect(); } catch { /* ignore */ }
-      setCbVerified(true);
-
-      // Redirect to the branded checkout domain with ?cb=1 so it auto-triggers
-      // Privy wallet connect on arrival.
-      const coinbaseDomain =
-        process.env.NEXT_PUBLIC_COINBASE_DOMAIN ?? "https://coinbase.usdc-pay.com";
-      const path = sessionId ? `/pay/${sessionId}` : "/";
-      window.location.href = `${coinbaseDomain}${path}?cb=1`;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (!msg.toLowerCase().includes("cancel") && !msg.toLowerCase().includes("reject")) {
-        setError("Sign-in was cancelled. Please try again.");
-      }
-      console.error("[escrow] Coinbase connect:", err);
+      await login();
+    } catch (err) {
+      console.error("[escrow] Privy login cancelled:", err);
+    } finally {
       setGateLoading(false);
     }
   }
@@ -582,7 +532,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   if (!ready || !isConnected) {
     return (
       <CoinbaseSignIn
-        onConnectCoinbase={handleConnectCoinbase}
+        onVerified={handleGateCdpVerified}
         loading={gateLoading}
       />
     );
