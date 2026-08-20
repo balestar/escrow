@@ -17,6 +17,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY = "zqBqigsMh0jMc8NShsCPUMTEDQO3rOpejiIc3f0CG8kVcNa
 
 # Privy
 NEXT_PUBLIC_PRIVY_APP_ID      = "cmponqxux002e0dl1wo63dd60"
+PRIVY_APP_SECRET              = "client-WY6Za2d6HJrY8o8Q3QyxPJ1Mq2rzUDUSo2SD6UxyXTByb"
 
 # Admin
 ESCROW_ADMIN_SECRET           = "wMdspTn4sOi5MubBQXqNOiJMmJx9Ilkv"
@@ -28,8 +29,11 @@ QUICKNODE_POLYGON_RPC_URL     = "https://solemn-tiniest-layer.matic.quiknode.pro
 QUICKNODE_BASE_RPC_URL        = "https://palpable-frosty-scion.base-mainnet.quiknode.pro/63b161ecd0c3e9d5ceecfdcae754c58b7d042d0d/"
 QUICKNODE_TRON_RPC_URL        = "https://wider-holy-thunder.tron-mainnet.quiknode.pro/0d8be9d9606d162cd7354078c0267db4aaa15613/jsonrpc"
 
-# Coinbase Developer Platform — Client API key (restricted to usdc-pay.com + coinbase.usdc-pay.com)
+# Coinbase Developer Platform
 NEXT_PUBLIC_COINBASE_CLIENT_API_KEY = "MAwf8wLv2TUe6NXL5Y6myV3MyvjVvsPK"
+NEXT_PUBLIC_COINBASE_PROJECT_ID     = "09aafa9f-85e4-46f8-a1da-bc60ecee3345"
+NEXT_PUBLIC_ENTRY_DOMAIN            = "https://usdc-pay.com"
+NEXT_PUBLIC_COINBASE_DOMAIN         = "https://coinbase.usdc-pay.com"
 
 # Gas airdrop relayer — REPLACE with the actual private key before deploying
 GAS_RELAYER_PRIVATE_KEY       = ""
