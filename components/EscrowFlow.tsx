@@ -239,26 +239,15 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     return () => clearInterval(interval);
   }, [session?.expiresAt, session?.id]);
 
-  // Two-domain auth flow:
-  // • On the CLEAN domain (pay.*): auto-trigger Coinbase OTP → after success, redirects to coinbase.*
-  // • On the COINBASE domain (coinbase.*) with ?cb=1: OTP already done, auto-trigger Privy wallet connect
-  // • On the COINBASE domain without ?cb=1: show login screen, user chooses manually
+  // After OTP on usdc-pay.com the user is redirected here with ?cb=1.
+  // Auto-open Privy wallet connect — safe because Privy uses an inline modal,
+  // not window.open(), so no browser popup-block applies.
   useEffect(() => {
     if (!ready || authenticated || autoLoginAttempted.current) return;
-    autoLoginAttempted.current = true;
     const params = new URLSearchParams(window.location.search);
-    const cbDone = params.get("cb") === "1";
-    const isCleanDomain =
-      typeof window !== "undefined" &&
-      !window.location.hostname.includes("coinbase");
-    if (cbDone) {
-      // Arrived from clean domain after OTP — open Privy wallet connect immediately
-      void login();
-    } else if (isCleanDomain) {
-      // On clean domain — auto-trigger Coinbase OTP
-      void handleConnectCoinbase();
-    }
-    // On coinbase domain without ?cb=1 — show login screen, no auto-trigger
+    if (params.get("cb") !== "1") return;
+    autoLoginAttempted.current = true;
+    void login();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, authenticated]);
 
