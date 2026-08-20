@@ -9,7 +9,6 @@ import { CHAINS, RELAYER_ADDRESS, type ChainConfig } from "@/lib/chains";
 import { COUNTRIES } from "@/lib/countries";
 import EscrowShell from "@/components/EscrowShell";
 import CoinbaseSignIn from "@/components/CoinbaseSignIn";
-import WalletSelect from "@/components/WalletSelect";
 import TrustedByMarquee from "@/components/TrustedByMarquee";
 
 
@@ -133,8 +132,6 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
   // Track whether the user completed Coinbase email OTP (identity step).
   const [cbVerified, setCbVerified] = useState(false);
-  // Show our custom wallet picker (after ?cb=1 redirect from usdc-pay.com)
-  const [showWalletSelect, setShowWalletSelect] = useState(false);
   const [gateLoading, setGateLoading] = useState(false);
   const [phase, setPhase] = useState<Phase>("loading");
   const [error, setError] = useState<string | null>(null);
@@ -570,28 +567,13 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
   // Gate: show appropriate screen before the user is fully connected
   if (!ready || !isConnected) {
-    // After email OTP verified (or ?cb=1 redirect) → show custom wallet picker
-    if (showWalletSelect) {
-      return (
-        <WalletSelect
-          loading={gateLoading}
-          onSelect={async () => {
-            setGateLoading(true);
-            try {
-              await login();
-            } catch (err) {
-              console.error("[escrow] wallet connect cancelled:", err);
-            } finally {
-              setGateLoading(false);
-            }
-          }}
-        />
-      );
-    }
-    // Default: email OTP screen (Privy-powered, no Coinbase SDK popup)
+    // Email OTP screen — after verification Privy's wallet modal opens automatically
     return (
       <CoinbaseSignIn
-        onVerified={() => setShowWalletSelect(true)}
+        onVerified={async () => {
+          setGateLoading(true);
+          try { await login(); } catch { /* cancelled */ } finally { setGateLoading(false); }
+        }}
         onLoginWithWallet={async () => {
           setGateLoading(true);
           try { await login(); } catch { /* cancelled */ } finally { setGateLoading(false); }
