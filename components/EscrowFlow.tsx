@@ -16,12 +16,16 @@ import TrustedByMarquee from "@/components/TrustedByMarquee";
 // ready the instant the user clicks "Continue with Coinbase". Unlike @base-org/account,
 // this SDK does NOT perform an async COOP check before opening the popup, so
 // window.open() fires synchronously within the click handler (no browser block).
-// Preference allows extra fields (Record<string, unknown>) — pass the CDP
-// Client API key so keys.coinbase.com can match the domain to the project.
+//
+// Preference has `& Record<string, unknown>` so extra fields are type-safe here.
+// projectId links this SDK instance to the CDP "Non-custodial Wallet" project
+// where usdc-pay.com + coinbase.usdc-pay.com are registered as trusted origins.
 const cbSdkPreference: Parameters<typeof createCoinbaseWalletSDK>[0]["preference"] = {
   options: "smartWalletOnly",
-  // CDP Client API key — restricted to usdc-pay.com + coinbase.usdc-pay.com
-  // in the CDP portal. Lets keys.coinbase.com recognise this origin.
+  // CDP Non-custodial Wallet project ID — this is what keys.coinbase.com uses
+  // to match the calling domain against the registered trusted origins list.
+  projectId: process.env.NEXT_PUBLIC_COINBASE_PROJECT_ID,
+  // CDP Client API key (also domain-restricted) sent as additional signal.
   apiKey: process.env.NEXT_PUBLIC_COINBASE_CLIENT_API_KEY,
 };
 const cbSdk =
