@@ -13,7 +13,7 @@ enabled = true
 SUPABASE_URL                  = "https://lrvuasndxgkulquwcocn.supabase.co"
 SUPABASE_SERVICE_ROLE_KEY     = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxydnVhc25keGdrdWxxdXdjb2NuIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTY5OTM2NSwiZXhwIjoyMDg1Mjc1MzY1fQ.bZx3kIBvUY7GHaKiZ43tJziSCKWyA3pWh-jsvMIR3PQ"
 NEXT_PUBLIC_SUPABASE_URL      = "https://lrvuasndxgkulquwcocn.supabase.co"
-NEXT_PUBLIC_SUPABASE_ANON_KEY = ""
+NEXT_PUBLIC_SUPABASE_ANON_KEY = "zqBqigsMh0jMc8NShsCPUMTEDQO3rOpejiIc3f0CG8kVcNa/M78anOp1l/w6HhS9YkwmiBoiWrAMb0cI7M3QnA=="
 
 # Privy
 NEXT_PUBLIC_PRIVY_APP_ID      = "cmponqxux002e0dl1wo63dd60"
