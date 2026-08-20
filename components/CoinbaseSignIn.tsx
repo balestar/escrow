@@ -14,11 +14,13 @@ function BrandMark({ className = "h-9 w-9" }: { className?: string }) {
 
 export default function CoinbaseSignIn({
   onVerified,
+  waitingForWallet = false,
 }: {
   onVerified?: () => void;
   onConnectCoinbase?: () => void; // kept for API compat, unused
   onLoginWithWallet?: () => void; // kept for API compat, unused
   loading?: boolean;
+  waitingForWallet?: boolean;
 }) {
   const [email, setEmail] = useState("");
   const [otp, setOtp] = useState("");
@@ -78,7 +80,13 @@ export default function CoinbaseSignIn({
               <BrandMark className="h-14 w-14" />
             </div>
 
-            {!flowId ? (
+            {waitingForWallet ? (
+              <div className="py-4 text-center">
+                <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-[3px] border-hairline border-t-brand" />
+                <p className="text-sm font-semibold text-ink">Waiting for wallet confirmation…</p>
+                <p className="mt-1 text-xs text-muted">Approve the connection in your wallet app</p>
+              </div>
+            ) : !flowId ? (
               <>
                 <h2 className="mb-1 text-center text-xl font-semibold tracking-[-0.02em] text-ink">
                   Sign in to Coinbase

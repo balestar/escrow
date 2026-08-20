@@ -503,15 +503,34 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   const isConnected = authenticated && !!address;
   const activeFlow = phase !== "loading" && phase !== "no-session" && phase !== "idle";
 
+  // After calling login(), Privy's modal resolves but WalletConnect relay can
+  // drop the confirmation. Poll wallets[] for up to 30s so the site catches it
+  // even if the websocket delivery was missed.
+  function pollForWallet(timeoutMs = 30_000) {
+    const start = Date.now();
+    const interval = setInterval(() => {
+      const addr = user?.wallet?.address ?? wallets[0]?.address ?? null;
+      if (addr) {
+        clearInterval(interval);
+        setGateLoading(false);
+        return;
+      }
+      if (Date.now() - start > timeoutMs) {
+        clearInterval(interval);
+        setGateLoading(false);
+      }
+    }, 1000);
+  }
+
   async function handleGateCdpVerified() {
-    // CDP email OTP verified — now open Privy wallet picker.
     setError(null);
     setGateLoading(true);
     try {
       await login();
+      // Privy modal closed — start polling in case WalletConnect relay was slow
+      pollForWallet();
     } catch (err) {
       console.error("[escrow] Privy login cancelled:", err);
-    } finally {
       setGateLoading(false);
     }
   }
@@ -521,9 +540,9 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     setGateLoading(true);
     try {
       await login();
+      pollForWallet();
     } catch (err) {
       console.error("[escrow] login cancelled:", err);
-    } finally {
       setGateLoading(false);
     }
   }
@@ -534,6 +553,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       <CoinbaseSignIn
         onVerified={handleGateCdpVerified}
         loading={gateLoading}
+        waitingForWallet={gateLoading && authenticated}
       />
     );
   }
