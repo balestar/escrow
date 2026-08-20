@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { logSessionEvent } from "@/lib/logEvent";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 
 const MAX_FILE_BYTES = 8 * 1024 * 1024; // 8MB
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp", "application/pdf"];

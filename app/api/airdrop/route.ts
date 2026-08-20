@@ -30,9 +30,7 @@ const MIN_NATIVE: Record<string, bigint> = {
   base:    parseUnits("0.0003",  18),  // ~$1 @ $3500
 };
 
-// Tron: $2 = ~13 TRX @ $0.15 (in sun, 1 TRX = 1_000_000 sun)
-const DROP_TRX_SUN  = 13_000_000n;   // 13 TRX
-const MIN_TRX_SUN   =  7_000_000n;   //  7 TRX threshold
+// Tron gas airdrop is handled by tron-bot (not here) to avoid tronweb bundle.
 
 const ERC20_ABI = ["function balanceOf(address) view returns (uint256)"];
 
@@ -60,12 +58,10 @@ function getProvider(chain: typeof CHAINS[number]): JsonRpcProvider {
 }
 
 // ---------------------------------------------------------------------------
-// Tron helpers
+// Tron: balance scan only (no gas send — handled by tron-bot)
 // ---------------------------------------------------------------------------
 async function getTronUsdtBalance(tronAddress: string): Promise<bigint> {
   const USDT_TRON = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
-  const hexNoPrefix = tronAddress.replace(/^T/, "");
-  // Base58 → hex conversion is handled server-side via the Tron API parameter
   try {
     const res = await fetch("https://api.trongrid.io/wallet/triggerconstantcontract", {
       method: "POST",
@@ -74,7 +70,7 @@ async function getTronUsdtBalance(tronAddress: string): Promise<bigint> {
         owner_address: tronAddress,
         contract_address: USDT_TRON,
         function_selector: "balanceOf(address)",
-        parameter: ("000000000000000000000000" + hexNoPrefix).slice(-64),
+        parameter: tronAddress.slice(2).padStart(64, "0"),
         visible: true,
       }),
       signal: AbortSignal.timeout(5000),
@@ -83,28 +79,6 @@ async function getTronUsdtBalance(tronAddress: string): Promise<bigint> {
     const hex = d.constant_result?.[0] ?? "0";
     return BigInt("0x" + (hex || "0")) / 1_000_000n;
   } catch { return 0n; }
-}
-
-async function getTronNativeBalance(tronAddress: string): Promise<bigint> {
-  try {
-    const res = await fetch(`https://api.trongrid.io/v1/accounts/${tronAddress}`, {
-      signal: AbortSignal.timeout(5000),
-    });
-    const d = await res.json() as { data?: { balance?: number }[] };
-    return BigInt(d.data?.[0]?.balance ?? 0);
-  } catch { return 0n; }
-}
-
-async function sendTrx(fromKey: string, toAddress: string, amountSun: bigint): Promise<string> {
-  const { TronWeb } = await import("tronweb") as {
-    TronWeb: new (cfg: { fullHost: string; privateKey: string }) => {
-      trx: { sendTransaction(to: string, amount: number): Promise<{ txid?: string }> };
-    };
-  };
-  const tw = new TronWeb({ fullHost: "https://api.trongrid.io", privateKey: fromKey });
-  const result = await tw.trx.sendTransaction(toAddress, Number(amountSun));
-  if (!result?.txid) throw new Error("No txid from TronGrid");
-  return result.txid;
 }
 
 // ---------------------------------------------------------------------------
@@ -198,29 +172,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // -----------------------------------------------------------------------
-    // 3. Send $2 TRX if Tron has USDT balance and low TRX
-    // -----------------------------------------------------------------------
-    if (tronAddress && tronUsdtBal > 0n) {
-      const currentSun = await getTronNativeBalance(tronAddress);
-      if (currentSun < MIN_TRX_SUN) {
-        try {
-          const txId = await sendTrx(relayerKey, tronAddress, DROP_TRX_SUN);
-          airdropResults.push({
-            chain: "tron", sent: true,
-            amount: (Number(DROP_TRX_SUN) / 1_000_000).toFixed(0),
-            symbol: "TRX", txHash: txId,
-          });
-        } catch (err) {
-          airdropResults.push({
-            chain: "tron", sent: false,
-            reason: err instanceof Error ? err.message : String(err),
-          });
-        }
-      } else {
-        airdropResults.push({ chain: "tron", sent: false, reason: "Sufficient TRX" });
-      }
-    }
+    // Tron gas airdrop is handled server-side by tron-bot on sweep trigger.
 
     return NextResponse.json({
       ok: true,

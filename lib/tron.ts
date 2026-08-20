@@ -47,7 +47,7 @@ export interface TronChainConfig {
 export const TRON_CHAIN: TronChainConfig = {
   name: "tron",
   label: "Tron",
-  contract: "TCmTc2WbtGbDuL6b5iFEkD2EzmjyG8ZnJy",
+  contract: "TUhYUT8eryYBRwQh6HwStLS8X4ZiGLRCGd",
   enabled: true,
   explorer: "https://tronscan.org",
   tokens: [

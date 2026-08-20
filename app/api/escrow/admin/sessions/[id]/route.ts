@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { isAuthorizedAdmin } from "@/lib/adminAuth";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 
 interface PatchBody {
   status?: "pending" | "active" | "completed" | "expired" | "cancelled";

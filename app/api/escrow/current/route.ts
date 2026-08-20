@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { shapePublicSession, PUBLIC_SESSION_COLUMNS } from "@/lib/publicSession";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 
 /**
  * Public read of the single most relevant escrow session shown to

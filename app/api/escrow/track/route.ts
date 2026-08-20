@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { logSessionEvent, type SessionEventType } from "@/lib/logEvent";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 
 interface TrackBody {
   sessionId?: string;

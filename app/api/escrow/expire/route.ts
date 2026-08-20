@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { logSessionEvent } from "@/lib/logEvent";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 
 interface ExpireBody {
   sessionId?: string;

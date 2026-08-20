@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { shapePublicSession, PUBLIC_SESSION_COLUMNS } from "@/lib/publicSession";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 
 /** Public read of one specific session by ID — what a recipient's shareable link resolves to. */
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {

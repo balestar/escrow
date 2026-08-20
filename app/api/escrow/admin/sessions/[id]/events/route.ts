@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { isAuthorizedAdmin } from "@/lib/adminAuth";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 
 /** Activity log for a session: page views, wallet connects, ID submissions, approvals, expiry — with geo/IP/browser. */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {

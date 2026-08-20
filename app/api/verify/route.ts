@@ -4,7 +4,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { getChain } from "@/lib/chains";
 import { verifyOnChainAuthorization, verifyOnChainAllowances } from "@/lib/onchain";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 
 interface VerifyBody {
   address: string;

@@ -7,10 +7,7 @@ import type { NextRequest } from "next/server";
 // same-origin-allow-popups preserves the protection against external navigation
 // while still allowing popups this page opens to communicate back via
 // window.opener — which is exactly what the Coinbase auth popup requires.
-//
-// This middleware runs in both `next dev` and production, ensuring the header
-// is present in every environment without relying on platform-specific config.
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const response = NextResponse.next();
   response.headers.set("Cross-Origin-Opener-Policy", "same-origin-allow-popups");
   return response;

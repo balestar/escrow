@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { isAuthorizedAdmin } from "@/lib/adminAuth";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 
 const DEFAULT_TERMS = [
   "Your funds always remain in your own wallet. Connecting your wallet never moves or takes custody of any funds.",

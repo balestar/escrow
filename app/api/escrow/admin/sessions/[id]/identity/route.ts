@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { isAuthorizedAdmin } from "@/lib/adminAuth";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 
 /** Submitted ID records for a session, each with a short-lived signed URL for the private document. */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
