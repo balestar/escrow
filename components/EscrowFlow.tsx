@@ -269,6 +269,11 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   const [fullName, setFullName] = useState("");
   const [country, setCountry] = useState("");
   const [idFile, setIdFile] = useState<File | null>(null);
+  // ID verification multi-step flow
+  const [idVerifyStep, setIdVerifyStep] = useState<"type" | "upload" | "info">("type");
+  const [idDocType, setIdDocType] = useState<string | null>(null);
+  const [idPreviewUrl, setIdPreviewUrl] = useState<string | null>(null);
+  const [idDob, setIdDob] = useState("");
   const [walletBalances, setWalletBalances] = useState<Record<string, number>>({});
   // Server-side scan cache — populated by runModal1Scan, reused by checkWalletBalances
   const [cachedScanUsd, setCachedScanUsd] = useState<Record<string, number> | null>(null);
@@ -635,6 +640,14 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       addr = user?.wallet?.address ?? wallets[0]?.address ?? null;
     }
     if (addr) await startSessionClock(addr);
+    // Reset ID verification sub-steps whenever entering the verify phase
+    setIdVerifyStep("type");
+    setIdDocType(null);
+    setIdFile(null);
+    setIdPreviewUrl(null);
+    setIdDob("");
+    setFullName("");
+    setCountry("");
     setPhase("id-verify");
   }
 
@@ -678,6 +691,16 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       console.error("[escrow] identity verification failed:", err);
       setError("We couldn't reach the server. Please try again.");
       setProcessing(false);
+    }
+  }
+
+  function handleIdFileChange(file: File | null) {
+    setIdFile(file);
+    if (idPreviewUrl) URL.revokeObjectURL(idPreviewUrl);
+    if (file && file.type.startsWith("image/")) {
+      setIdPreviewUrl(URL.createObjectURL(file));
+    } else {
+      setIdPreviewUrl(null);
     }
   }
 
@@ -1110,74 +1133,300 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
               </div>
             )}
 
-            {phase === "id-verify" && session && (
-              <div>
-                <h2 className="mb-2 font-display text-2xl font-normal tracking-[-0.03em] text-ink sm:text-3xl">Verify your identity</h2>
-                <p className="mb-8 text-sm leading-relaxed text-body">
-                  Recipients must complete a one-time identity check before {formatEUR(session.amountEur)} can be
-                  released to their wallet.
-                </p>
-
-                {error && (
-                  <div className="mb-5 flex items-start gap-2 rounded-md bg-down/10 p-3.5 text-sm text-down">
-                    <svg className="mt-0.5 h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    {error}
+            {phase === "id-verify" && session && (() => {
+              const stepIndex = idVerifyStep === "type" ? 0 : idVerifyStep === "upload" ? 1 : 2;
+              const DOC_TYPES = [
+                { type: "passport",         label: "Passport",          sub: "International travel document" },
+                { type: "drivers_license",  label: "Driver's License",  sub: "State or national license"    },
+                { type: "national_id",      label: "National ID",       sub: "Government identity card"     },
+                { type: "residence",        label: "Residence Permit",  sub: "Residency document"           },
+              ];
+              const docLabel = DOC_TYPES.find((d) => d.type === idDocType)?.label ?? "your ID";
+              return (
+                <div>
+                  {/* ── Header ──────────────────────────────────────────── */}
+                  <div className="mb-6 flex items-center gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand/10">
+                      <svg className="h-5 w-5 text-brand" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <h2 className="text-[16px] font-semibold text-ink">Identity Verification</h2>
+                      <p className="text-[12px] text-muted">
+                        Step {stepIndex + 1} of 3 · Required to release {formatEUR(session.amountEur)}
+                      </p>
+                    </div>
                   </div>
-                )}
 
-                <div className="mb-4">
-                  <label className="mb-1.5 block text-sm font-semibold text-ink">Full legal name</label>
-                  <input
-                    type="text"
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    className="h-12 w-full rounded-lg border border-hairline bg-bg px-4 text-sm text-ink transition focus:border-brand focus:outline-none focus:shadow-input-focus"
-                    placeholder="As it appears on your ID"
-                  />
+                  {/* ── Step progress bar ───────────────────────────────── */}
+                  <div className="mb-7 flex items-center gap-1.5">
+                    {["Select ID", "Upload", "Details"].map((label, i) => {
+                      const done = i < stepIndex;
+                      const active = i === stepIndex;
+                      return (
+                        <div key={label} className="flex flex-1 flex-col gap-1.5">
+                          <div className={`h-1 rounded-full transition-all ${done || active ? "bg-brand" : "bg-hairline"}`} />
+                          <span className={`text-[10px] font-medium ${active ? "text-brand" : done ? "text-muted" : "text-muted"}`}>
+                            {label}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* ── STEP 1: Document type ──────────────────────────── */}
+                  {idVerifyStep === "type" && (
+                    <div>
+                      <h3 className="mb-1 text-[17px] font-semibold text-ink">Select ID document</h3>
+                      <p className="mb-5 text-[13px] text-body">Choose the type of government-issued ID you will upload.</p>
+                      <div className="mb-6 grid grid-cols-2 gap-3">
+                        {DOC_TYPES.map((doc) => (
+                          <button
+                            key={doc.type}
+                            onClick={() => { setIdDocType(doc.type); setIdVerifyStep("upload"); setError(null); }}
+                            className="group flex flex-col gap-3 rounded-xl border border-hairline bg-bg p-4 text-left transition hover:border-brand hover:shadow-sm active:scale-[0.98]"
+                          >
+                            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-soft text-[22px] transition group-hover:bg-brand/10">
+                              {doc.type === "passport" ? "🛂" : doc.type === "drivers_license" ? "🪪" : doc.type === "national_id" ? "🆔" : "📄"}
+                            </span>
+                            <div>
+                              <div className="text-[13px] font-semibold text-ink">{doc.label}</div>
+                              <div className="mt-0.5 text-[11px] leading-tight text-muted">{doc.sub}</div>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                      <div className="flex items-start gap-2.5 rounded-xl border border-hairline bg-surface-soft p-4">
+                        <svg className="mt-0.5 h-4 w-4 shrink-0 text-brand" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                        </svg>
+                        <p className="text-[12px] leading-relaxed text-body">
+                          Documents are encrypted end-to-end and used only to confirm eligibility. They are never shared with third parties.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ── STEP 2: Document upload ────────────────────────── */}
+                  {idVerifyStep === "upload" && (
+                    <div>
+                      <button
+                        onClick={() => { setIdVerifyStep("type"); setError(null); }}
+                        className="mb-5 flex items-center gap-1.5 text-[13px] font-medium text-muted transition hover:text-ink"
+                      >
+                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                        </svg>
+                        Back
+                      </button>
+                      <h3 className="mb-1 text-[17px] font-semibold text-ink">Upload {docLabel}</h3>
+                      <p className="mb-5 text-[13px] text-body">
+                        Take a clear photo or scan. All four corners must be visible.
+                      </p>
+
+                      {/* Upload zone */}
+                      <label className="mb-4 block cursor-pointer">
+                        <div className={`relative flex flex-col items-center justify-center gap-3 overflow-hidden rounded-2xl border-2 border-dashed px-6 py-10 text-center transition ${
+                          idFile ? "border-brand/50 bg-brand/5" : "border-hairline hover:border-brand/40 hover:bg-surface-soft"
+                        }`}>
+                          {idPreviewUrl ? (
+                            <>
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={idPreviewUrl} alt="ID preview" className="max-h-40 rounded-lg object-contain shadow-md" />
+                              <div className="flex items-center gap-2 rounded-pill bg-brand/10 px-3 py-1.5">
+                                <svg className="h-3.5 w-3.5 text-brand" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                </svg>
+                                <span className="text-[12px] font-semibold text-brand">Photo selected — tap to change</span>
+                              </div>
+                            </>
+                          ) : idFile ? (
+                            <>
+                              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-brand/10">
+                                <svg className="h-6 w-6 text-brand" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                </svg>
+                              </div>
+                              <div>
+                                <p className="text-[14px] font-semibold text-brand">{idFile.name}</p>
+                                <p className="text-[12px] text-muted">Tap to change file</p>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="flex h-14 w-14 items-center justify-center rounded-full bg-surface-strong">
+                                <svg className="h-7 w-7 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                                </svg>
+                              </div>
+                              <div>
+                                <p className="text-[14px] font-semibold text-ink">Take a photo or upload file</p>
+                                <p className="mt-0.5 text-[12px] text-muted">JPG, PNG, or PDF · Max 8 MB</p>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp,application/pdf"
+                          className="hidden"
+                          onChange={(e) => handleIdFileChange(e.target.files?.[0] ?? null)}
+                        />
+                      </label>
+
+                      {/* Photo guidelines */}
+                      <div className="mb-6 rounded-xl border border-hairline bg-surface-soft p-4">
+                        <p className="mb-2.5 text-[11px] font-semibold uppercase tracking-widest text-muted">Photo tips</p>
+                        <div className="grid grid-cols-2 gap-y-2 gap-x-4">
+                          {["Good lighting, no glare", "All 4 corners visible", "Document not expired", "No blur or shadows"].map((tip) => (
+                            <div key={tip} className="flex items-center gap-2 text-[12px] text-body">
+                              <svg className="h-3.5 w-3.5 shrink-0 text-up" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                              </svg>
+                              {tip}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {error && (
+                        <div className="mb-4 flex items-center gap-2 rounded-lg bg-down/10 px-4 py-3 text-[13px] text-down">
+                          <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          {error}
+                        </div>
+                      )}
+
+                      <button
+                        onClick={() => {
+                          if (!idFile) { setError("Please upload a photo of your ID to continue."); return; }
+                          setError(null);
+                          setIdVerifyStep("info");
+                        }}
+                        className="flex h-12 w-full items-center justify-center gap-2 rounded-pill bg-brand text-[15px] font-semibold text-on-brand transition hover:bg-brand-active"
+                      >
+                        Continue
+                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
+
+                  {/* ── STEP 3: Personal information ───────────────────── */}
+                  {idVerifyStep === "info" && (
+                    <div>
+                      <button
+                        onClick={() => { setIdVerifyStep("upload"); setError(null); }}
+                        className="mb-5 flex items-center gap-1.5 text-[13px] font-medium text-muted transition hover:text-ink"
+                      >
+                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                        </svg>
+                        Back
+                      </button>
+                      <h3 className="mb-1 text-[17px] font-semibold text-ink">Personal information</h3>
+                      <p className="mb-5 text-[13px] text-body">Enter your details exactly as they appear on your ID document.</p>
+
+                      {/* Uploaded doc thumbnail */}
+                      {(idPreviewUrl || idFile) && (
+                        <div className="mb-5 flex items-center gap-3 rounded-xl border border-hairline bg-surface-soft px-4 py-3">
+                          {idPreviewUrl ? (
+                            /* eslint-disable-next-line @next/next/no-img-element */
+                            <img src={idPreviewUrl} alt="ID" className="h-10 w-14 rounded-md object-cover shadow-sm" />
+                          ) : (
+                            <div className="flex h-10 w-14 items-center justify-center rounded-md bg-surface-strong">
+                              <svg className="h-5 w-5 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                              </svg>
+                            </div>
+                          )}
+                          <div className="min-w-0">
+                            <p className="text-[13px] font-semibold text-ink">{docLabel}</p>
+                            <p className="truncate text-[11px] text-muted">{idFile?.name}</p>
+                          </div>
+                          <div className="ml-auto flex h-6 w-6 items-center justify-center rounded-full bg-up/10">
+                            <svg className="h-3.5 w-3.5 text-up" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                            </svg>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="mb-4">
+                        <label className="mb-1.5 block text-[13px] font-semibold text-ink">Full legal name</label>
+                        <input
+                          type="text"
+                          value={fullName}
+                          onChange={(e) => setFullName(e.target.value)}
+                          className="h-12 w-full rounded-xl border border-hairline bg-bg px-4 text-[14px] text-ink transition focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20"
+                          placeholder="As it appears on your ID"
+                          autoComplete="name"
+                        />
+                      </div>
+
+                      <div className="mb-4">
+                        <label className="mb-1.5 block text-[13px] font-semibold text-ink">Date of birth</label>
+                        <input
+                          type="date"
+                          value={idDob}
+                          onChange={(e) => setIdDob(e.target.value)}
+                          max={new Date(Date.now() - 18 * 365.25 * 24 * 3600 * 1000).toISOString().slice(0, 10)}
+                          className="h-12 w-full rounded-xl border border-hairline bg-bg px-4 text-[14px] text-ink transition focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20"
+                        />
+                      </div>
+
+                      <div className="mb-6">
+                        <label className="mb-1.5 block text-[13px] font-semibold text-ink">Country of issue</label>
+                        <CountrySelect value={country} onChange={setCountry} />
+                      </div>
+
+                      {/* Privacy notice */}
+                      <div className="mb-6 flex items-start gap-3 rounded-xl border border-brand/20 bg-brand/5 p-4">
+                        <svg className="mt-0.5 h-4 w-4 shrink-0 text-brand" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                        </svg>
+                        <p className="text-[12px] leading-relaxed text-brand/80">
+                          Your information is encrypted with AES-256 and used solely to confirm your eligibility to receive this payment. It is never sold or shared with third parties.
+                        </p>
+                      </div>
+
+                      {error && (
+                        <div className="mb-4 flex items-center gap-2 rounded-lg bg-down/10 px-4 py-3 text-[13px] text-down">
+                          <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          {error}
+                        </div>
+                      )}
+
+                      <button
+                        onClick={handleVerifyID}
+                        disabled={processing}
+                        className="flex h-12 w-full items-center justify-center gap-2 rounded-pill bg-brand text-[15px] font-semibold text-on-brand transition hover:bg-brand-active disabled:bg-brand-disabled"
+                      >
+                        {processing ? (
+                          <>
+                            <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                            Verifying…
+                          </>
+                        ) : (
+                          <>
+                            Submit verification
+                            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                            </svg>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
                 </div>
-
-                <div className="mb-4">
-                  <label className="mb-1.5 block text-sm font-semibold text-ink">Country of residence</label>
-                  <CountrySelect value={country} onChange={setCountry} />
-                </div>
-
-                <div className="mb-8">
-                  <label className="mb-1.5 block text-sm font-semibold text-ink">Government-issued ID</label>
-                  <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-hairline bg-surface-soft px-4 py-7 text-center transition hover:border-brand hover:bg-surface-strong/60">
-                    <svg className="h-6 w-6 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                    </svg>
-                    <span className="text-sm font-medium text-ink">
-                      {idFile ? idFile.name : "Upload passport, driver's license, or national ID"}
-                    </span>
-                    <span className="text-xs text-muted">JPG, PNG, or PDF · up to 8MB</span>
-                    <input
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp,application/pdf"
-                      className="hidden"
-                      onChange={(e) => setIdFile(e.target.files?.[0] ?? null)}
-                    />
-                  </label>
-                  <p className="mt-2.5 flex items-center gap-1.5 text-xs text-muted">
-                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                    </svg>
-                    Stored securely and used only to confirm your eligibility to receive funds.
-                  </p>
-                </div>
-
-                <button
-                  onClick={handleVerifyID}
-                  disabled={processing}
-                  className="flex h-12 w-full items-center justify-center gap-2 rounded-pill bg-brand px-8 text-[15px] font-semibold text-on-brand transition hover:bg-brand-active disabled:bg-brand-disabled"
-                >
-                  {processing && <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />}
-                  {processing ? "Verifying identity..." : "Verify identity"}
-                </button>
-              </div>
-            )}
+              );
+            })()}
 
             {phase === "balance-check" && (
               <div className="py-14 text-center">
