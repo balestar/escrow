@@ -1,29 +1,20 @@
 import { ImageResponse } from "next/og";
 
-// Coinbase favicon — blue circle #0052FF with centred white square cutout.
-// Exact brand proportions: square = 53.125% of diameter (Coinbase 2022 spec).
-// Output at 64×64 for crisp display on retina screens.
+// Coinbase "C" favicon — blue circle + white C letterform.
+// SVG rendered via ImageResponse for pixel-perfect sharpness at any size.
 export const size = { width: 64, height: 64 };
 export const contentType = "image/png";
 
 export default function Icon() {
   return new ImageResponse(
     (
-      <div
-        style={{
-          width: 64,
-          height: 64,
-          borderRadius: "50%",
-          background: "#0052FF",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          overflow: "hidden",
-        }}
-      >
-        {/* 34px = 53.125% of 64px — exact Coinbase brand spec */}
-        <div style={{ width: 34, height: 34, background: "#ffffff", flexShrink: 0 }} />
-      </div>
+      <svg width="64" height="64" viewBox="0 0 56 56" fill="none">
+        <circle cx="28" cy="28" r="28" fill="#0052FF" />
+        <path
+          d="M 15.125 13.125 Q 13.125 13.125 13.125 15.125 L 13.125 40.875 Q 13.125 42.875 15.125 42.875 L 40.875 42.875 Q 42.875 42.875 42.875 40.875 L 42.875 33.5 L 31.5 33.5 L 31.5 22.5 L 42.875 22.5 L 42.875 15.125 Q 42.875 13.125 40.875 13.125 Z"
+          fill="white"
+        />
+      </svg>
     ),
     { ...size }
   );

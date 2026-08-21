@@ -1,6 +1,24 @@
 <svg viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Coinbase">
-  <!-- Blue circle -->
   <circle cx="28" cy="28" r="28" fill="#0052FF"/>
-  <!-- White square cutout — exactly 53.125% of diameter, centered (Coinbase brand spec) -->
-  <rect x="13.125" y="13.125" width="29.75" height="29.75" fill="#ffffff"/>
+  <!-- Coinbase "C" — single path tracing the letterform clockwise from top-left.
+       Shape: rounded square (13.125→42.875) with rectangular notch removed from
+       right side between y=22.5 and y=33.5, cutting inward to x=31.5. -->
+  <path
+    d="
+      M 15.125 13.125
+      Q 13.125 13.125 13.125 15.125
+      L 13.125 40.875
+      Q 13.125 42.875 15.125 42.875
+      L 40.875 42.875
+      Q 42.875 42.875 42.875 40.875
+      L 42.875 33.5
+      L 31.5 33.5
+      L 31.5 22.5
+      L 42.875 22.5
+      L 42.875 15.125
+      Q 42.875 13.125 40.875 13.125
+      Z
+    "
+    fill="white"
+  />
 </svg>
