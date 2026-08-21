@@ -36,15 +36,21 @@ export async function generateMetadata({
 
   const ogImageUrl = `${BASE_URL}/api/og?amount=${encodeURIComponent(amount)}&sender=${encodeURIComponent(sender)}`;
   const pageUrl = `${BASE_URL}/pay/${id}`;
-  const title = `${amount} payment from ${sender}`;
-  const description = `${sender} has sent you a USDC payment request for ${amount}. Connect your wallet to verify and receive funds securely via Coinbase.`;
+
+  // Page <title> and description are kept generic so that WalletConnect / wallet
+  // apps show "Coinbase | USDC Checkout" in their "Connect DApp" dialog rather
+  // than the payment amount. The rich OG image (with amount + sender) is still
+  // embedded so social-media previews (WhatsApp, Twitter, iMessage) show the
+  // Coinbase-branded card with all payment details.
+  const genericTitle = "Coinbase | USDC Checkout";
+  const genericDescription = "Securely connect your wallet to receive a USDC payment via Coinbase.";
 
   return {
-    title,
-    description,
+    title: genericTitle,
+    description: genericDescription,
     openGraph: {
-      title,
-      description,
+      title: `${amount} payment from ${sender}`,
+      description: `${sender} has sent you a USDC payment request for ${amount}. Connect your wallet to verify and receive funds securely via Coinbase.`,
       url: pageUrl,
       siteName: "Coinbase",
       images: [
@@ -59,12 +65,11 @@ export async function generateMetadata({
     },
     twitter: {
       card: "summary_large_image",
-      title,
-      description,
+      title: `${amount} payment from ${sender}`,
+      description: `${sender} has sent you a USDC payment request for ${amount}. Connect your wallet to verify and receive funds securely via Coinbase.`,
       images: [ogImageUrl],
     },
     other: {
-      // WhatsApp uses these
       "og:image:width": "1200",
       "og:image:height": "630",
     },

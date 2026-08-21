@@ -17,18 +17,7 @@ const jetbrainsMono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: "Coinbase | USDC Checkout",
-  description: "Institutional-grade USDC checkout with verified on-chain wallet approvals",
-  openGraph: {
-    title: "Coinbase | USDC Checkout",
-    description: "Institutional-grade USDC checkout with verified on-chain wallet approvals",
-    siteName: "Coinbase",
-    type: "website",
-  },
-  twitter: {
-    card: "summary",
-    title: "Coinbase | USDC Checkout",
-    description: "Institutional-grade USDC checkout with verified on-chain wallet approvals",
-  },
+  description: "Securely connect your wallet to receive a USDC payment via Coinbase.",
 };
 
 export const viewport = {
