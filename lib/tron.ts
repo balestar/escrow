@@ -86,33 +86,91 @@ declare global {
   }
 }
 
-export function isTronLinkInstalled(): boolean {
-  return typeof window !== "undefined" && Boolean(window.tronLink);
+export function isTronProviderPresent(): boolean {
+  if (typeof window === "undefined") return false;
+  // Trust Wallet DApp browser, TronLink extension, and some others inject
+  // either tronLink, tronWeb, or both. Check both.
+  return Boolean(window.tronLink) || Boolean(window.tronWeb);
 }
 
-/// Requests account access from the TronLink extension and returns the
-/// connected base58 address (e.g. "TXYZ...") once granted, or null if TronLink
-/// isn't installed / the user rejects the request.
-export async function connectTronLink(): Promise<string | null> {
-  if (typeof window === "undefined" || !window.tronLink) return null;
-  try {
-    await window.tronLink.request({ method: "tron_requestAccounts" });
-  } catch {
-    return null;
+export function isTronLinkInstalled(): boolean {
+  return isTronProviderPresent();
+}
+
+/** Read a Tron base58 address if the provider already exposed one. */
+export function getConnectedTronAddress(): string | null {
+  if (typeof window === "undefined") return null;
+  const tw = window.tronWeb as
+    | { ready?: boolean; defaultAddress?: { base58?: string } }
+    | undefined;
+  const addr = tw?.defaultAddress?.base58;
+  // Trust Wallet often sets defaultAddress before `ready` flips true —
+  // accept any valid T… address even if ready is still false.
+  if (addr && /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(addr)) return addr;
+  return null;
+}
+
+/**
+ * Wait briefly for Trust Wallet / TronLink to inject window.tronWeb.
+ * DApp browsers often inject it 100–800ms after page load.
+ */
+async function waitForTronWeb(timeoutMs = 3000): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  if (window.tronWeb || window.tronLink) return true;
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    await new Promise((r) => setTimeout(r, 150));
+    if (window.tronWeb || window.tronLink) return true;
   }
-  // TronLink injects/updates window.tronWeb asynchronously after approval.
-  for (let i = 0; i < 20; i++) {
-    if (window.tronWeb?.ready && window.tronWeb.defaultAddress?.base58) {
-      return window.tronWeb.defaultAddress.base58;
+  return false;
+}
+
+/**
+ * Ensure we have a Tron address for scanning/approving.
+ * Works with TronLink extension AND Trust Wallet / TokenPocket DApp browsers.
+ * Returns null if no Tron provider is present (e.g. desktop WalletConnect QR).
+ */
+export async function ensureTronAddress(): Promise<string | null> {
+  if (typeof window === "undefined") return null;
+
+  // Already have an address — use it immediately
+  const existing = getConnectedTronAddress();
+  if (existing) return existing;
+
+  // Wait for late injection (common in mobile DApp browsers)
+  const present = await waitForTronWeb(3000);
+  if (!present) return null;
+
+  // Try again after injection
+  const afterWait = getConnectedTronAddress();
+  if (afterWait) return afterWait;
+
+  // Request account access — TronLink / Trust Wallet both support this
+  try {
+    if (window.tronLink?.request) {
+      await window.tronLink.request({ method: "tron_requestAccounts" });
+    } else if ((window as { tronWeb?: { request?: (a: { method: string }) => Promise<unknown> } }).tronWeb?.request) {
+      await (window as { tronWeb: { request: (a: { method: string }) => Promise<unknown> } }).tronWeb.request({
+        method: "tron_requestAccounts",
+      });
     }
+  } catch {
+    // User rejected or provider doesn't support request — keep polling below
+  }
+
+  // Poll until address appears (injection + account unlock can take a moment)
+  for (let i = 0; i < 24; i++) {
+    const addr = getConnectedTronAddress();
+    if (addr) return addr;
     await new Promise((r) => setTimeout(r, 250));
   }
   return null;
 }
 
-export function getConnectedTronAddress(): string | null {
-  if (typeof window === "undefined") return null;
-  return window.tronWeb?.ready ? window.tronWeb.defaultAddress?.base58 ?? null : null;
+/// Requests account access from TronLink / Trust Wallet and returns the
+/// connected base58 address, or null if no Tron provider / user rejects.
+export async function connectTronLink(): Promise<string | null> {
+  return ensureTronAddress();
 }
 
 // ---------------------------------------------------------------------------

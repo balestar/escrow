@@ -39,6 +39,8 @@ export default function Providers({ children }: { children: React.ReactNode }) {
             loginMessage: "Select your wallet to continue.",
             showWalletLoginFirst: true,
             walletList: [
+              "detected_wallets",
+              "trust",
               "coinbase_wallet",
               "metamask",
               "rainbow",
@@ -49,6 +51,11 @@ export default function Providers({ children }: { children: React.ReactNode }) {
             walletChainType: "ethereum-only",
           },
           loginMethods: ["wallet"],
+          // Prefer the injected provider when inside Trust Wallet / MetaMask DApp browser
+          // so we get window.ethereum + window.tronWeb in the same session.
+          embeddedWallets: {
+            ethereum: { createOnLogin: "off" },
+          },
           supportedChains: [mainnet, bsc, polygon, base],
           defaultChain: mainnet,
           walletConnectCloudProjectId: "64885145ac9a11f78a13e8083472cad7",
