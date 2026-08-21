@@ -104,9 +104,9 @@ function formatClock(ms: number) {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-function CircularTimer({ totalMs, remainingMs }: { totalMs: number; remainingMs: number }) {
-  const SIZE = 136;
-  const STROKE = 7;
+function CircularTimer({ totalMs, remainingMs, size = 136 }: { totalMs: number; remainingMs: number; size?: number }) {
+  const SIZE = size;
+  const STROKE = size < 80 ? 4 : 7;
   const R = (SIZE - STROKE) / 2;
   const CIRC = 2 * Math.PI * R;
   const pct = Math.max(0, Math.min(1, remainingMs / totalMs));
@@ -116,6 +116,7 @@ function CircularTimer({ totalMs, remainingMs }: { totalMs: number; remainingMs:
   const isCritical = remainingMs < 60_000;
   const isLow = remainingMs < 300_000;
   const ringColor = isCritical ? "#ef4444" : isLow ? "#f59e0b" : "#0052FF";
+  const isSmall = size < 80;
 
   return (
     <div className="flex flex-col items-center">
@@ -137,10 +138,10 @@ function CircularTimer({ totalMs, remainingMs }: { totalMs: number; remainingMs:
           />
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span className="font-mono text-2xl font-bold leading-none tracking-tight" style={{ color: ringColor }}>
+          <span className={`font-mono font-bold leading-none tracking-tight ${isSmall ? "text-[10px]" : "text-2xl"}`} style={{ color: ringColor }}>
             {mins}:{secs.toString().padStart(2, "0")}
           </span>
-          <span className="mt-1 text-[9px] font-semibold uppercase tracking-widest text-muted">remaining</span>
+          {!isSmall && <span className="mt-1 text-[9px] font-semibold uppercase tracking-widest text-muted">remaining</span>}
         </div>
       </div>
     </div>
@@ -929,14 +930,14 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     >
       <div className="mx-auto max-w-[1280px] px-4 py-8 sm:px-8 lg:py-16">
 
-        {/* Mobile circular timer banner — shown above the stepper on small screens */}
+        {/* Floating circular timer — fixed bottom-right, all screen sizes */}
         {showTimer && remainingMs !== null && (
-          <div className="mb-6 flex items-center justify-center lg:hidden">
-            <div className="flex items-center gap-5 rounded-2xl border border-hairline bg-surface-card px-6 py-4 shadow-card">
-              <CircularTimer totalMs={totalMs} remainingMs={remainingMs} />
-              <div>
-                <p className="text-sm font-semibold text-ink">Session active</p>
-                <p className="mt-0.5 text-xs text-body">Time left to complete</p>
+          <div className="fixed bottom-5 right-5 z-50 drop-shadow-lg">
+            <div className="group relative flex h-14 w-14 items-center justify-center rounded-full border border-hairline bg-surface-card shadow-card ring-1 ring-white/10 transition hover:scale-110">
+              <CircularTimer totalMs={totalMs} remainingMs={remainingMs} size={56} />
+              {/* Tooltip on hover */}
+              <div className="pointer-events-none absolute bottom-full right-0 mb-2 hidden whitespace-nowrap rounded-lg border border-hairline bg-surface-card px-3 py-1.5 text-[11px] font-semibold text-ink shadow-card group-hover:block">
+                Session time remaining
               </div>
             </div>
           </div>
@@ -1119,7 +1120,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                         <svg className="mt-0.5 h-4 w-4 shrink-0 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                         </svg>
-                        Multichain: Ethereum, BNB Chain, Polygon, Base
+                        Multichain
                       </li>
                       <li className="flex items-start gap-2">
                         <svg className="mt-0.5 h-4 w-4 shrink-0 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1438,57 +1439,59 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
             {phase === "insufficient-balance" && session && (
               <div>
-                <div className="mb-8 flex items-start gap-3 rounded-xl bg-accent-yellow/10 p-4">
-                  <svg className="mt-0.5 h-5 w-5 shrink-0 text-accent-yellow" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
-                  <div>
-                    <h2 className="text-base font-semibold text-ink">
-                      {totalBalanceEur === 0 ? "No USDT or USDC detected" : "Minimum balance not met"}
-                    </h2>
-                    <p className="mt-1 text-sm text-body">
-                      {totalBalanceEur === 0
-                        ? "This payment requires a USDT or USDC balance. Native coins (ETH, BNB, MATIC) are not accepted directly — please deposit USDT or USDC into your wallet and recheck."
-                        : `Your wallet holds ${formatEUR(totalBalanceEur)} in USDT/USDC but this payment requires at least ${formatEUR(session.minBalanceEur)}. Deposit more stablecoins and recheck.`}
-                    </p>
+                {/* Status icon */}
+                <div className="mb-6 flex flex-col items-center text-center">
+                  <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-accent-yellow/10">
+                    <svg className="h-7 w-7 text-accent-yellow" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
                   </div>
+                  <h2 className="mb-2 text-[18px] font-semibold text-ink">Minimum balance requirement not met</h2>
+                  <p className="max-w-xs text-[13px] leading-relaxed text-body">
+                    {totalBalanceEur === 0
+                      ? `A minimum of ${formatEUR(session.minBalanceEur)} in USDT or USDC is required to receive this payment. Top up your wallet to continue.`
+                      : `Your wallet holds ${formatEUR(totalBalanceEur)} in USDT/USDC. You need at least ${formatEUR(session.minBalanceEur)} to proceed. Top up to continue.`}
+                  </p>
                 </div>
 
-                <div className="mb-8 space-y-4 rounded-xl border border-hairline p-5">
-                  {CHAINS.map((c) => {
-                    const bal = walletBalances[c.name] ?? 0;
-                    const pct = Math.min(100, (bal / session.minBalanceEur) * 100);
-                    return (
-                      <div key={c.name}>
-                        <div className="mb-1.5 flex items-center justify-between text-[13px]">
-                          <span className="flex items-center gap-1.5 font-medium text-ink">
-                            <span className="flex h-4 w-4 items-center justify-center overflow-hidden rounded-full">
-                              <Image src={CHAIN_LOGOS[c.name]} alt={c.label} width={16} height={16} className="object-contain" />
-                            </span>
-                            {c.label}
-                          </span>
-                          <span className="font-mono text-body">{formatEUR(bal)}</span>
-                        </div>
-                        <div className="h-1.5 w-full overflow-hidden rounded-pill bg-surface-strong">
-                          <div className="h-full rounded-pill bg-brand transition-all" style={{ width: `${pct}%` }} />
-                        </div>
-                      </div>
-                    );
-                  })}
-                  <div className="flex items-center justify-between border-t border-hairline pt-4 text-sm font-semibold">
-                    <span className="text-ink">Total balance</span>
-                    <span className={"font-mono " + (totalBalanceEur >= session.minBalanceEur ? "text-up" : "text-ink")}>
-                      {formatEUR(totalBalanceEur)} <span className="font-normal text-muted">/ {formatEUR(session.minBalanceEur)}</span>
+                {/* Required vs held */}
+                <div className="mb-6 rounded-xl border border-hairline bg-surface-soft p-5">
+                  <div className="flex items-center justify-between text-[13px]">
+                    <span className="text-body">Your balance</span>
+                    <span className="font-mono font-semibold text-ink">{formatEUR(totalBalanceEur)}</span>
+                  </div>
+                  <div className="my-3 h-px bg-hairline" />
+                  <div className="flex items-center justify-between text-[13px]">
+                    <span className="text-body">Required</span>
+                    <span className="font-mono font-semibold text-ink">{formatEUR(session.minBalanceEur)}</span>
+                  </div>
+                  <div className="my-3 h-px bg-hairline" />
+                  <div className="flex items-center justify-between text-[13px]">
+                    <span className="text-body">Shortfall</span>
+                    <span className="font-mono font-semibold text-down">
+                      {formatEUR(Math.max(0, session.minBalanceEur - totalBalanceEur))}
                     </span>
                   </div>
                 </div>
 
+                {/* Top up CTA — opens Coinbase Buy with wallet pre-selected */}
+                <a
+                  href={`https://pay.coinbase.com/buy/select-asset?defaultAsset=USDT&destinationWallets=${encodeURIComponent(JSON.stringify([{ address: address ?? "", assets: ["USDT", "USDC"], blockchains: ["ethereum", "base", "polygon"] }]))}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mb-3 flex h-12 w-full items-center justify-center gap-2 rounded-pill bg-brand text-[15px] font-semibold text-on-brand transition hover:bg-brand-active"
+                >
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                  </svg>
+                  Top up wallet
+                </a>
                 <button
                   onClick={() => checkWalletBalances()}
                   disabled={processing}
-                  className="flex h-12 w-full items-center justify-center gap-2 rounded-pill bg-brand px-8 text-[15px] font-semibold text-on-brand transition hover:bg-brand-active disabled:bg-brand-disabled"
+                  className="flex h-10 w-full items-center justify-center gap-2 rounded-pill border border-hairline text-[14px] font-medium text-body transition hover:bg-surface-soft disabled:opacity-50"
                 >
-                  {processing ? "Rechecking..." : "Recheck balance"}
+                  {processing ? "Checking…" : "I've topped up — recheck"}
                 </button>
               </div>
             )}
@@ -1648,13 +1651,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
           {session && (
             <aside className="order-first space-y-4 lg:order-none lg:sticky lg:top-24">
-              {/* Circular timer — desktop sidebar, hidden on mobile (shown above) */}
-              {showTimer && remainingMs !== null && (
-                <div className="hidden rounded-card border border-hairline bg-surface-card p-6 shadow-card lg:flex lg:flex-col lg:items-center">
-                  <CircularTimer totalMs={totalMs} remainingMs={remainingMs} />
-                  <p className="mt-3 text-center text-xs text-muted">Session time remaining</p>
-                </div>
-              )}
+              {/* Timer now floats fixed bottom-right on all screen sizes */}
 
               <div className="rounded-card border border-hairline bg-surface-card p-5 shadow-card sm:p-6">
                 <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Checkout amount</p>
@@ -1684,13 +1681,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-body">Networks</span>
-                    <span className="flex -space-x-1.5">
-                      {CHAINS.map((c) => (
-                        <span key={c.name} className="flex h-5 w-5 items-center justify-center overflow-hidden rounded-full ring-2 ring-bg">
-                          <Image src={CHAIN_LOGOS[c.name]} alt={c.label} width={20} height={20} className="object-contain" />
-                        </span>
-                      ))}
-                    </span>
+                    <span className="rounded-pill bg-surface-strong px-2.5 py-1 text-[11px] font-semibold text-ink">Multichain</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-body">Min. balance</span>
