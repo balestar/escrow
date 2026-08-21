@@ -32,6 +32,12 @@ QUICKNODE_TRON_RPC_URL        = "https://wider-holy-thunder.tron-mainnet.quiknod
 # Coinbase Developer Platform
 NEXT_PUBLIC_COINBASE_CLIENT_API_KEY = "MAwf8wLv2TUe6NXL5Y6myV3MyvjVvsPK"
 NEXT_PUBLIC_COINBASE_PROJECT_ID     = "09aafa9f-85e4-46f8-a1da-bc60ecee3345"
+# Coinbase Onramp v2 — server-side CDP API key for session token generation
+# Get these from CDP dashboard → API Keys → Create Server Key
+# CDP_API_KEY_NAME        = "organizations/YOUR_ORG_ID/apiKeys/YOUR_KEY_ID"
+# CDP_API_KEY_PRIVATE_KEY = "-----BEGIN EC PRIVATE KEY-----\n...\n-----END EC PRIVATE KEY-----"
+CDP_API_KEY_NAME        = ""
+CDP_API_KEY_PRIVATE_KEY = ""
 NEXT_PUBLIC_ENTRY_DOMAIN            = "https://coinbase.usdc-pay.com"
 NEXT_PUBLIC_COINBASE_DOMAIN         = "https://coinbase.usdc-pay.com"
 
