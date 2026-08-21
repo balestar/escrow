@@ -20,7 +20,7 @@ NEXT_PUBLIC_PRIVY_APP_ID      = "cmponqxux002e0dl1wo63dd60"
 PRIVY_APP_SECRET              = "client-WY6Za2d6HJrY8o8Q3QyxPJ1Mq2rzUDUSo2SD6UxyXTByb"
 
 # Admin
-ESCROW_ADMIN_SECRET           = "wMdspTn4sOi5MubBQXqNOiJMmJx9Ilkv"
+ESCROW_ADMIN_SECRET           = "TP3mX1Uqhno2WUtdBPVie7nkuuJR1EQBxN"
 
 # QuickNode RPCs
 QUICKNODE_ETH_RPC_URL         = "https://fluent-chaotic-isle.ethereum-mainnet.quiknode.pro/f31528569e5666353aa6980455d6db886b1fdb67/"
