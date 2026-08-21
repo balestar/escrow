@@ -12,7 +12,6 @@ import {
   ensureTronAddress,
   peekTronAddress,
   isInWalletDappBrowser,
-  isMobileBrowser,
   openInTrustWalletDapp,
   needsTrustDappForTron,
   getTrustRedirectCount,
