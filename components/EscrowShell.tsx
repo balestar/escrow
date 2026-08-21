@@ -4,9 +4,9 @@ import { usePrivy, useWallets } from "@privy-io/react-auth";
 
 function BrandMark({ className = "h-5 w-5 sm:h-6 sm:w-6" }: { className?: string }) {
   return (
-    <svg viewBox="0 0 32 32" className={className} fill="none" aria-label="Coinbase">
-      <circle cx="16" cy="16" r="16" fill="#0052FF" />
-      <rect x="7.5" y="7.5" width="17" height="17" fill="#fff" />
+    <svg viewBox="0 0 56 56" className={className} fill="none" aria-label="Coinbase">
+      <circle cx="28" cy="28" r="28" fill="#0052FF" />
+      <rect x="13.125" y="13.125" width="29.75" height="29.75" fill="#fff" />
     </svg>
   );
 }

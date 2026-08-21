@@ -3,11 +3,22 @@
 import { useState } from "react";
 import { useSignInWithEmail, useVerifyEmailOTP } from "@coinbase/cdp-hooks";
 
+/** Standard Coinbase mark — blue circle + white square. For light/white backgrounds. */
 function BrandMark({ className = "h-9 w-9" }: { className?: string }) {
   return (
-    <svg viewBox="0 0 32 32" className={className} fill="none" aria-label="Coinbase">
-      <circle cx="16" cy="16" r="16" fill="#0052FF" />
-      <rect x="7.5" y="7.5" width="17" height="17" fill="#fff" />
+    <svg viewBox="0 0 56 56" className={className} fill="none" aria-label="Coinbase">
+      <circle cx="28" cy="28" r="28" fill="#0052FF" />
+      <rect x="13.125" y="13.125" width="29.75" height="29.75" fill="#fff" />
+    </svg>
+  );
+}
+
+/** Inverted Coinbase mark — white circle + blue square. For blue/dark backgrounds. */
+function BrandMarkInverted({ className = "h-9 w-9" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 56 56" className={className} fill="none" aria-label="Coinbase">
+      <circle cx="28" cy="28" r="28" fill="#fff" />
+      <rect x="13.125" y="13.125" width="29.75" height="29.75" fill="#0052FF" />
     </svg>
   );
 }
@@ -72,22 +83,15 @@ export default function CoinbaseSignIn({
 
         {/* Logo wordmark */}
         <div className="relative flex items-center gap-3">
-          <svg viewBox="0 0 32 32" className="h-10 w-10 shrink-0" fill="none" aria-label="Coinbase">
-            <circle cx="16" cy="16" r="16" fill="rgba(255,255,255,0.20)" />
-            <rect x="7.5" y="7.5" width="17" height="17" fill="#fff" />
-          </svg>
+          <BrandMarkInverted className="h-10 w-10 shrink-0" />
           <span className="text-[22px] font-bold tracking-tight text-white">Coinbase</span>
         </div>
 
         {/* Hero content */}
         <div className="relative flex flex-col items-start">
-          {/* Giant logo */}
+          {/* Giant logo — white C mark on blue background */}
           <div className="mb-10">
-            <svg viewBox="0 0 120 120" className="h-[120px] w-[120px] drop-shadow-2xl" fill="none" aria-label="Coinbase">
-              <circle cx="60" cy="60" r="60" fill="rgba(255,255,255,0.15)" />
-              <circle cx="60" cy="60" r="60" fill="#0052FF" />
-              <rect x="28" y="28" width="64" height="64" fill="#fff" />
-            </svg>
+            <BrandMarkInverted className="h-[120px] w-[120px] drop-shadow-2xl" />
           </div>
 
           <h1 className="mb-4 font-display text-4xl font-semibold leading-tight tracking-[-0.04em] text-white xl:text-5xl">
