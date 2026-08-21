@@ -93,35 +93,95 @@ export function isMobileBrowser(): boolean {
 }
 
 /**
- * Build the page URL that Trust should open (marks intent with tw=1).
+ * Build the page URL that a wallet DApp browser should open (marks intent with tw=1).
  */
-export function buildTrustDappTargetUrl(url?: string): string {
+export function buildWalletDappTargetUrl(url?: string): string {
   if (typeof window === "undefined") return url || "";
   const u = new URL(url || window.location.href);
   u.searchParams.set("tw", "1");
   return u.toString();
 }
 
-/**
- * Open the CURRENT page inside Trust Wallet's injected DApp browser.
- * WalletConnect "Open in wallet" alone is NOT enough for tronWeb.
- */
-export function openInTrustWalletDapp(url?: string): void {
-  if (typeof window === "undefined") return;
-  const target = encodeURIComponent(buildTrustDappTargetUrl(url));
-  // coin_id 60 = ETH; Trust still injects tronWeb in the shared DApp browser
-  window.location.href = `https://link.trustwallet.com/open_url?coin_id=60&url=${target}`;
+/** @deprecated use buildWalletDappTargetUrl */
+export const buildTrustDappTargetUrl = buildWalletDappTargetUrl;
+
+export type TronCapableWalletId = "trust" | "tokenpocket" | "tronlink" | "imtoken";
+
+export interface TronCapableWallet {
+  id: TronCapableWalletId;
+  label: string;
+  /** Deep-link / universal link that opens `url` inside that wallet's injected browser */
+  openUrl: (pageUrl: string) => string;
 }
 
-/** Mobile + not inside Trust/TokenPocket DApp browser → Tron cannot work yet. */
-export function needsTrustDappForTron(): boolean {
+/**
+ * Wallets that can inject tronWeb when the page runs in their in-app browser.
+ * MetaMask / Rainbow / Coinbase / plain WalletConnect cannot — Tron is separate.
+ */
+export const TRON_CAPABLE_WALLETS: TronCapableWallet[] = [
+  {
+    id: "trust",
+    label: "Trust Wallet",
+    openUrl: (pageUrl) =>
+      `https://link.trustwallet.com/open_url?coin_id=60&url=${encodeURIComponent(pageUrl)}`,
+  },
+  {
+    id: "tokenpocket",
+    label: "TokenPocket",
+    openUrl: (pageUrl) => {
+      const params = encodeURIComponent(JSON.stringify({ url: pageUrl, chain: "TRON", source: "usdc-pay" }));
+      return `tpdapp://open?params=${params}`;
+    },
+  },
+  {
+    id: "tronlink",
+    label: "TronLink",
+    openUrl: (pageUrl) => {
+      const param = encodeURIComponent(
+        JSON.stringify({
+          url: pageUrl,
+          action: "open",
+          protocol: "tronlink",
+          version: "1.0",
+        })
+      );
+      return `tronlinkoutside://pull.activity?param=${param}`;
+    },
+  },
+  {
+    id: "imtoken",
+    label: "imToken",
+    openUrl: (pageUrl) => `imtokenv2://navigate/DappView?url=${encodeURIComponent(pageUrl)}`,
+  },
+];
+
+/** Open page inside a specific wallet DApp browser (required for tronWeb). */
+export function openInWalletDapp(walletId: TronCapableWalletId, url?: string): void {
+  if (typeof window === "undefined") return;
+  const pageUrl = buildWalletDappTargetUrl(url);
+  const wallet = TRON_CAPABLE_WALLETS.find((w) => w.id === walletId) ?? TRON_CAPABLE_WALLETS[0];
+  window.location.href = wallet.openUrl(pageUrl);
+}
+
+/**
+ * Open the CURRENT page inside Trust Wallet's injected DApp browser.
+ * Prefer `openInWalletDapp` when offering multiple wallets.
+ */
+export function openInTrustWalletDapp(url?: string): void {
+  openInWalletDapp("trust", url);
+}
+
+/** Mobile + not inside a Tron-capable DApp browser → Tron cannot work yet. */
+export function needsWalletDappForTron(): boolean {
   return isMobileBrowser() && !isInWalletDappBrowser();
 }
 
+/** @deprecated use needsWalletDappForTron */
+export const needsTrustDappForTron = needsWalletDappForTron;
+
 /**
  * How many auto deep-links we've attempted this tab.
- * We auto-redirect at most once, then show a persistent "Open in Trust" button
- * so we never silently skip Tron after a one-shot flag.
+ * Auto-redirect at most once (Trust), then show wallet picker CTA.
  */
 export function getTrustRedirectCount(): number {
   if (typeof window === "undefined") return 0;

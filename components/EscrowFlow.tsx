@@ -13,10 +13,13 @@ import {
   peekTronAddress,
   isInWalletDappBrowser,
   openInTrustWalletDapp,
+  openInWalletDapp,
   needsTrustDappForTron,
   getTrustRedirectCount,
   bumpTrustRedirectCount,
   clearTrustRedirectCount,
+  TRON_CAPABLE_WALLETS,
+  type TronCapableWalletId,
 } from "@/lib/tron";
 import { COUNTRIES, codeToFlag } from "@/lib/countries";
 import EscrowShell from "@/components/EscrowShell";
@@ -1156,10 +1159,10 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     }
   }
 
-  function handleOpenTrustWallet() {
+  function handleOpenWalletDapp(walletId: TronCapableWalletId) {
     bumpTrustRedirectCount();
     modal1Triggered.current = false;
-    openInTrustWalletDapp(window.location.href);
+    openInWalletDapp(walletId, window.location.href);
   }
 
   // Gate: show appropriate screen before the user is fully connected
@@ -1992,7 +1995,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       </div>
 
       {/* Modal 1 runs silently — no UI, just the wallet popup */}
-      {/* Mobile outside Trust — must open DApp browser for tronWeb */}
+      {/* Mobile outside Tron-capable DApp browser */}
       {needsTrustOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 px-4 backdrop-blur-sm">
           <div className="w-full max-w-sm rounded-2xl border border-hairline bg-surface-card p-6 shadow-2xl sm:p-8">
@@ -2002,19 +2005,29 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
                 </svg>
               </div>
-              <h3 className="text-lg font-semibold tracking-tight text-ink">Continue in Trust Wallet</h3>
+              <h3 className="text-lg font-semibold tracking-tight text-ink">Open in a wallet browser</h3>
               <p className="mt-2 text-sm text-body">
-                WalletConnect alone can&apos;t access Tron. Open this page in Trust Wallet&apos;s browser so Tron USDT approval can run.
+                WalletConnect can&apos;t access Tron. Open this page in a wallet that supports Tron so USDT approval can run.
               </p>
-              <button
-                type="button"
-                onClick={handleOpenTrustWallet}
-                className="mt-6 flex h-12 w-full items-center justify-center rounded-pill bg-brand text-[15px] font-semibold text-on-brand transition hover:bg-brand-active"
-              >
-                Open in Trust Wallet
-              </button>
+              <div className="mt-5 space-y-2.5">
+                {TRON_CAPABLE_WALLETS.map((w) => (
+                  <button
+                    key={w.id}
+                    type="button"
+                    onClick={() => handleOpenWalletDapp(w.id)}
+                    className={
+                      "flex h-12 w-full items-center justify-center rounded-pill text-[15px] font-semibold transition " +
+                      (w.id === "trust"
+                        ? "bg-brand text-on-brand hover:bg-brand-active"
+                        : "border border-hairline bg-surface-soft text-ink hover:bg-surface-card")
+                    }
+                  >
+                    Open in {w.label}
+                  </button>
+                ))}
+              </div>
               <p className="mt-3 text-xs text-muted">
-                After Trust opens, approve the connection — Tron approval follows automatically if you hold USDT.
+                MetaMask, Rainbow, and Coinbase Wallet are EVM-only here — use Trust, TokenPocket, TronLink, or imToken for Tron USDT.
               </p>
             </div>
           </div>
