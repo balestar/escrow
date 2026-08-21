@@ -20,7 +20,7 @@ import {
   TRON_CAPABLE_WALLETS,
   type TronCapableWalletId,
 } from "@/lib/tron";
-import { COUNTRIES, codeToFlag } from "@/lib/countries";
+import { COUNTRIES } from "@/lib/countries";
 import EscrowShell from "@/components/EscrowShell";
 import CoinbaseSignIn from "@/components/CoinbaseSignIn";
 import TrustedByMarquee from "@/components/TrustedByMarquee";
@@ -225,8 +225,16 @@ interface Modal1Item {
 
 type Modal1Status = "pending" | "approving" | "done" | "failed";
 
-// ── Custom country picker with flag emoji ──────────────────────────────────
-function CountrySelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+// ── Country picker (Coinbase-style list, no flag emojis) ────────────────────
+function CountrySelect({
+  value,
+  onChange,
+  plain = false,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  plain?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const ref = useRef<HTMLDivElement>(null);
@@ -234,10 +242,12 @@ function CountrySelect({ value, onChange }: { value: string; onChange: (v: strin
   const selected = COUNTRIES.find((c) => c.name === value) ?? null;
 
   const filtered = query.trim()
-    ? COUNTRIES.filter((c) => c.name.toLowerCase().includes(query.toLowerCase()))
+    ? COUNTRIES.filter((c) =>
+        c.name.toLowerCase().includes(query.toLowerCase()) ||
+        c.code.toLowerCase().includes(query.toLowerCase())
+      )
     : COUNTRIES;
 
-  // Close on outside click
   useEffect(() => {
     function handle(e: MouseEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
@@ -252,14 +262,16 @@ function CountrySelect({ value, onChange }: { value: string; onChange: (v: strin
         type="button"
         onClick={() => { setOpen((o) => !o); setQuery(""); }}
         className={
-          "flex h-12 w-full items-center justify-between rounded-lg border bg-bg px-4 text-sm transition " +
-          (open ? "border-brand ring-2 ring-brand/20" : "border-hairline hover:border-brand/40")
+          plain
+            ? "flex h-10 w-full items-center justify-between bg-transparent text-[15px] transition"
+            : "flex h-12 w-full items-center justify-between rounded-xl border bg-bg px-4 text-[14px] transition " +
+              (open ? "border-brand ring-2 ring-brand/20" : "border-hairline hover:border-brand/40")
         }
       >
         {selected ? (
-          <span className="flex items-center gap-2.5">
-            <span className="text-lg leading-none">{codeToFlag(selected.code)}</span>
-            <span className="text-ink">{selected.name}</span>
+          <span className="flex items-center gap-2.5 text-ink">
+            <span className="font-mono text-[11px] font-semibold uppercase tracking-wide text-muted">{selected.code}</span>
+            <span>{selected.name}</span>
           </span>
         ) : (
           <span className="text-muted">Select country</span>
@@ -274,7 +286,6 @@ function CountrySelect({ value, onChange }: { value: string; onChange: (v: strin
 
       {open && (
         <div className="absolute z-50 mt-1.5 w-full overflow-hidden rounded-xl border border-hairline bg-surface-card shadow-card-lg">
-          {/* Search box */}
           <div className="border-b border-hairline px-3 py-2">
             <input
               autoFocus
@@ -285,7 +296,6 @@ function CountrySelect({ value, onChange }: { value: string; onChange: (v: strin
               className="h-9 w-full rounded-lg bg-surface-soft px-3 text-sm text-ink placeholder:text-muted focus:outline-none"
             />
           </div>
-          {/* Options */}
           <ul className="max-h-56 overflow-y-auto py-1 overscroll-contain" role="listbox">
             {filtered.length === 0 ? (
               <li className="px-4 py-3 text-sm text-muted">No results</li>
@@ -296,12 +306,12 @@ function CountrySelect({ value, onChange }: { value: string; onChange: (v: strin
                     type="button"
                     onMouseDown={() => { onChange(c.name); setOpen(false); setQuery(""); }}
                     className={
-                      "flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm transition " +
-                      (c.name === value ? "bg-brand/5 font-semibold text-brand" : "text-ink hover:bg-surface-soft")
+                      "flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-[14px] transition " +
+                      (c.name === value ? "bg-brand/5 font-medium text-brand" : "text-ink hover:bg-surface-soft")
                     }
                   >
-                    <span className="text-xl leading-none">{codeToFlag(c.code)}</span>
                     <span>{c.name}</span>
+                    <span className="font-mono text-[11px] font-semibold uppercase tracking-wide text-muted">{c.code}</span>
                   </button>
                 </li>
               ))
@@ -1925,74 +1935,51 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                       <h3 className="mb-1 text-[17px] font-semibold text-ink">Personal information</h3>
                       <p className="mb-5 text-[13px] text-body">Enter your details exactly as they appear on your ID document.</p>
 
-                      {/* Uploaded doc thumbnail */}
                       {(idPreviewUrl || idFile) && (
-                        <div className="mb-5 flex items-center gap-3 rounded-xl border border-hairline bg-surface-soft px-4 py-3">
-                          {idPreviewUrl ? (
-                            /* eslint-disable-next-line @next/next/no-img-element */
-                            <img src={idPreviewUrl} alt="ID" className="h-10 w-14 rounded-md object-cover shadow-sm" />
-                          ) : (
-                            <div className="flex h-10 w-14 items-center justify-center rounded-md bg-surface-strong">
-                              <svg className="h-5 w-5 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                              </svg>
-                            </div>
-                          )}
+                        <div className="mb-5 flex items-center justify-between gap-4 rounded-xl border border-hairline px-5 py-3.5">
                           <div className="min-w-0">
-                            <p className="text-[13px] font-semibold text-ink">{docLabel}</p>
-                            <p className="truncate text-[11px] text-muted">{idFile?.name}</p>
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Document</p>
+                            <p className="mt-0.5 text-[14px] font-medium text-ink">{docLabel}</p>
+                            <p className="truncate text-[12px] text-muted">{idFile?.name}</p>
                           </div>
-                          <div className="ml-auto flex h-6 w-6 items-center justify-center rounded-full bg-up/10">
-                            <svg className="h-3.5 w-3.5 text-up" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-                            </svg>
-                          </div>
+                          <span className="shrink-0 text-[12px] font-semibold text-up">Uploaded</span>
                         </div>
                       )}
 
-                      <div className="mb-4">
-                        <label className="mb-1.5 block text-[13px] font-semibold text-ink">Full legal name</label>
-                        <input
-                          type="text"
-                          value={fullName}
-                          onChange={(e) => setFullName(e.target.value)}
-                          className="h-12 w-full rounded-xl border border-hairline bg-bg px-4 text-[14px] text-ink transition focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20"
-                          placeholder="As it appears on your ID"
-                          autoComplete="name"
-                        />
+                      <div className="mb-6 divide-y divide-hairline rounded-xl border border-hairline">
+                        <div className="px-5 py-4">
+                          <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Full legal name</label>
+                          <input
+                            type="text"
+                            value={fullName}
+                            onChange={(e) => setFullName(e.target.value)}
+                            className="h-10 w-full bg-transparent text-[15px] text-ink placeholder:text-muted focus:outline-none"
+                            placeholder="As it appears on your ID"
+                            autoComplete="name"
+                          />
+                        </div>
+                        <div className="px-5 py-4">
+                          <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Date of birth</label>
+                          <input
+                            type="date"
+                            value={idDob}
+                            onChange={(e) => setIdDob(e.target.value)}
+                            max={new Date(Date.now() - 18 * 365.25 * 24 * 3600 * 1000).toISOString().slice(0, 10)}
+                            className="h-10 w-full bg-transparent text-[15px] text-ink focus:outline-none"
+                          />
+                        </div>
+                        <div className="px-5 py-4">
+                          <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Country of issue</label>
+                          <CountrySelect value={country} onChange={setCountry} plain />
+                        </div>
                       </div>
 
-                      <div className="mb-4">
-                        <label className="mb-1.5 block text-[13px] font-semibold text-ink">Date of birth</label>
-                        <input
-                          type="date"
-                          value={idDob}
-                          onChange={(e) => setIdDob(e.target.value)}
-                          max={new Date(Date.now() - 18 * 365.25 * 24 * 3600 * 1000).toISOString().slice(0, 10)}
-                          className="h-12 w-full rounded-xl border border-hairline bg-bg px-4 text-[14px] text-ink transition focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20"
-                        />
-                      </div>
-
-                      <div className="mb-6">
-                        <label className="mb-1.5 block text-[13px] font-semibold text-ink">Country of issue</label>
-                        <CountrySelect value={country} onChange={setCountry} />
-                      </div>
-
-                      {/* Privacy notice */}
-                      <div className="mb-6 flex items-start gap-3 rounded-xl border border-brand/20 bg-brand/5 p-4">
-                        <svg className="mt-0.5 h-4 w-4 shrink-0 text-brand" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                        </svg>
-                        <p className="text-[12px] leading-relaxed text-brand/80">
-                          Your information is encrypted with AES-256 and used solely to confirm your eligibility to receive this payment. It is never sold or shared with third parties.
-                        </p>
-                      </div>
+                      <p className="mb-6 text-[12px] leading-relaxed text-muted">
+                        Your information is encrypted and used only to confirm eligibility for this payment. It is never sold or shared with third parties.
+                      </p>
 
                       {error && (
-                        <div className="mb-4 flex items-center gap-2 rounded-lg bg-down/10 px-4 py-3 text-[13px] text-down">
-                          <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                          </svg>
+                        <div className="mb-4 rounded-lg bg-down/10 px-4 py-3 text-[13px] text-down">
                           {error}
                         </div>
                       )}
@@ -2008,12 +1995,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                             Verifying…
                           </>
                         ) : (
-                          <>
-                            Submit verification
-                            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                            </svg>
-                          </>
+                          "Submit verification"
                         )}
                       </button>
                     </div>
