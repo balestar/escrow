@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useRef, useEffect } from "react";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
 
 const CB_PATH = `
@@ -36,12 +37,25 @@ export default function EscrowShell({
   connectSlot,
 }: {
   children: React.ReactNode;
-  /** Optional custom button node from the inner flow (e.g. to trigger Privy login with its own handler). */
   connectSlot?: React.ReactNode;
 }) {
   const { ready, authenticated, logout, user } = usePrivy();
   const { wallets } = useWallets();
   const address = user?.wallet?.address ?? wallets[0]?.address ?? null;
+
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+    if (menuOpen) document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [menuOpen]);
 
   return (
     <div className="flex min-h-screen flex-col bg-bg font-sans text-ink">
@@ -54,14 +68,45 @@ export default function EscrowShell({
 
           <div className="flex items-center gap-2 sm:gap-3">
             {authenticated && address ? (
-              <button
-                onClick={() => logout()}
-                className="flex h-9 items-center gap-1.5 rounded-pill border border-hairline bg-bg px-3 text-xs font-medium text-ink transition hover:bg-surface-soft sm:h-10 sm:px-4 sm:text-sm"
-              >
-                <span className="h-1.5 w-1.5 rounded-full bg-up" />
-                <span className="hidden xs:inline">{short(address)}</span>
-                <span className="xs:hidden">{short(address, 4, 3)}</span>
-              </button>
+              <div className="relative" ref={menuRef}>
+                {/* Wallet pill button */}
+                <button
+                  onClick={() => setMenuOpen((o) => !o)}
+                  className="flex h-9 items-center gap-1.5 rounded-pill border border-hairline bg-bg px-3 text-xs font-medium text-ink transition hover:bg-surface-soft sm:h-10 sm:px-4 sm:text-sm"
+                >
+                  <span className="h-1.5 w-1.5 rounded-full bg-up" />
+                  <span className="hidden xs:inline">{short(address)}</span>
+                  <span className="xs:hidden">{short(address, 4, 3)}</span>
+                  <svg
+                    className={`ml-0.5 h-3 w-3 text-muted transition-transform ${menuOpen ? "rotate-180" : ""}`}
+                    fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+
+                {/* Dropdown */}
+                {menuOpen && (
+                  <div className="absolute right-0 top-full z-50 mt-2 w-48 overflow-hidden rounded-2xl border border-hairline bg-white shadow-lg">
+                    {/* Address row */}
+                    <div className="border-b border-hairline px-4 py-3">
+                      <p className="text-[11px] font-medium uppercase tracking-wide text-muted">Connected</p>
+                      <p className="mt-0.5 font-mono text-[12px] text-ink">{short(address, 8, 6)}</p>
+                    </div>
+                    {/* Sign out */}
+                    <button
+                      onClick={() => { setMenuOpen(false); logout(); }}
+                      className="flex w-full items-center gap-2.5 px-4 py-3 text-left text-[13px] font-medium text-down transition hover:bg-surface-soft"
+                    >
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                          d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                      </svg>
+                      Sign out
+                    </button>
+                  </div>
+                )}
+              </div>
             ) : (
               connectSlot ?? null
             )}
