@@ -1773,20 +1773,21 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                     <div>
                       <h3 className="mb-1 text-[17px] font-semibold text-ink">Select ID document</h3>
                       <p className="mb-5 text-[13px] text-body">Choose the type of government-issued ID you will upload.</p>
-                      <div className="mb-6 grid grid-cols-2 gap-3">
+                      <div className="mb-6 divide-y divide-hairline rounded-xl border border-hairline">
                         {DOC_TYPES.map((doc) => (
                           <button
                             key={doc.type}
+                            type="button"
                             onClick={() => { setIdDocType(doc.type); setIdVerifyStep("upload"); setError(null); }}
-                            className="group flex flex-col gap-3 rounded-xl border border-hairline bg-bg p-4 text-left transition hover:border-brand hover:shadow-sm active:scale-[0.98]"
+                            className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left transition hover:bg-surface-soft active:bg-surface-soft"
                           >
-                            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-soft text-[22px] transition group-hover:bg-brand/10">
-                              {doc.type === "passport" ? "🛂" : doc.type === "drivers_license" ? "🪪" : doc.type === "national_id" ? "🆔" : "📄"}
-                            </span>
-                            <div>
-                              <div className="text-[13px] font-semibold text-ink">{doc.label}</div>
-                              <div className="mt-0.5 text-[11px] leading-tight text-muted">{doc.sub}</div>
+                            <div className="min-w-0">
+                              <div className="text-[15px] font-medium text-ink">{doc.label}</div>
+                              <div className="mt-0.5 text-[13px] text-muted">{doc.sub}</div>
                             </div>
+                            <svg className="h-5 w-5 shrink-0 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                            </svg>
                           </button>
                         ))}
                       </div>
