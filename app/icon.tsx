@@ -1,5 +1,8 @@
 import { ImageResponse } from "next/og";
 
+// Favicon rendered as the correct Coinbase logomark:
+// blue circle #0052FF with a centred white square (no rounded corners),
+// square is ~53% of the circle diameter — matching the official 2022 mark.
 export const size = { width: 32, height: 32 };
 export const contentType = "image/png";
 
@@ -8,16 +11,18 @@ export default function Icon() {
     (
       <div
         style={{
-          width: "100%",
-          height: "100%",
+          width: 32,
+          height: 32,
           borderRadius: "50%",
           background: "#0052FF",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
+          overflow: "hidden",
         }}
       >
-        <div style={{ width: 10, height: 10, borderRadius: 3, background: "#fff" }} />
+        {/* 17 × 17 white square — 53 % of 32 px diameter, no border-radius */}
+        <div style={{ width: 17, height: 17, background: "#ffffff" }} />
       </div>
     ),
     { ...size }
