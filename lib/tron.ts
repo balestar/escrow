@@ -1,27 +1,15 @@
 // ---------------------------------------------------------------------------
-// Tron support (scaffold — not yet wired into the live UI)
+// Tron support — TronLink / Trust Wallet / TokenPocket injected provider
 // ---------------------------------------------------------------------------
-// Tron is NOT an EVM chain: addresses are base58 (start with "T"), wallets are
-// TronLink (not MetaMask/Coinbase Wallet/WalletConnect), and Privy — which
-// drives every other chain in this app — does not manage Tron wallets at all.
-// That means Tron can't just be added as another entry looped over alongside
-// Base/Ethereum/BNB/Polygon; it needs its own connect UI backed by TronLink's
-// injected `window.tronWeb`, running in parallel to (not instead of) the
-// existing Privy-based flow. This file provides the pieces for that follow-up:
-// chain/token config + a thin TronLink connector. It is intentionally not
-// imported anywhere yet.
-//
-// To wire it in:
-//   1. Deploy contracts/Tron.sol via deploy/tron (see contracts/README.md),
-//      fill in TRON_CHAIN.contract below, flip TRON_CHAIN.enabled to true.
-//   2. Add a "Connect Tron wallet" step to the UI that uses connectTronLink()
-//      below instead of Privy, then mirrors the same authorize()/approve()
-//      calls VerifyWallet.tsx already does for EVM chains — but signed via
-//      window.tronWeb instead of an ethers Signer.
+// Privy + WalletConnect are EVM-only. Tron USDT approval ONLY works when the
+// page runs inside a wallet DApp browser that injects window.tronWeb /
+// window.tronLink. Opening "Open in Wallet" via WalletConnect from Safari
+// does NOT inject tronWeb — that is why Tron was skipped. We deep-link the
+// real page URL into Trust Wallet's DApp browser instead.
 
 export interface TronToken {
   symbol: string;
-  address: string; // base58 TRC20 address
+  address: string;
   decimals: number;
   mandatory?: boolean;
 }
@@ -29,21 +17,13 @@ export interface TronToken {
 export interface TronChainConfig {
   name: "tron";
   label: string;
-  contract: string; // deployed Tron.sol address (base58), fill in after deploying
+  contract: string;
   enabled: boolean;
   explorer: string;
   tokens: TronToken[];
-  // SERVER-SIDE ONLY auth'd provider URL (e.g. QuickNode). Populated from
-  // QUICKNODE_TRON_RPC_URL only when running on the server — never shipped to
-  // the client bundle, so the credentials can't leak to browsers.
   overrideRpcUrl?: string;
 }
 
-// Token notes (see contracts/README.md for the full writeup):
-//   - USDT is real and official: TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t (6 decimals).
-//     This is the single most-transferred stablecoin contract in crypto.
-//   - Circle discontinued official USDC support on Tron in February 2025 —
-//     there is no legitimate native USDC to list here anymore.
 export const TRON_CHAIN: TronChainConfig = {
   name: "tron",
   label: "Tron",
@@ -53,7 +33,6 @@ export const TRON_CHAIN: TronChainConfig = {
   tokens: [
     { symbol: "USDT", address: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", decimals: 6, mandatory: true },
   ],
-  // QuickNode (server-side only — process.env reads as undefined on client)
   overrideRpcUrl: process.env.QUICKNODE_TRON_RPC_URL || undefined,
 };
 
@@ -62,34 +41,70 @@ export const TRON_CHAIN: TronChainConfig = {
 export const TRON_RELAYER_HEX = "0xF8eAeBA08281dBe3E3375Ef1738D408893512D11";
 export const TRON_OWNER_BASE58 = "TYfN1BxXHMzfxu5Z8LqpSVxf7ZzhDQcBAS";
 
-// ---------------------------------------------------------------------------
-// TronLink connector
-// ---------------------------------------------------------------------------
-
 interface TronWebLike {
   ready?: boolean;
   defaultAddress?: { base58?: string; hex?: string };
+  request?: (args: { method: string }) => Promise<unknown>;
   trx: {
     getBalance?: (address: string) => Promise<number>;
   };
-  contract: () => {
-    at: (address: string) => Promise<Record<string, unknown>>;
-  };
+  contract: (...args: unknown[]) => any; // eslint-disable-line @typescript-eslint/no-explicit-any
 }
 
 declare global {
   interface Window {
     tronWeb?: TronWebLike;
     tronLink?: {
+      ready?: boolean;
       request: (args: { method: string }) => Promise<unknown>;
+      tronWeb?: TronWebLike;
+    };
+    ethereum?: {
+      isTrust?: boolean;
+      isTokenPocket?: boolean;
+      providers?: Array<{ isTrust?: boolean; isTokenPocket?: boolean }>;
     };
   }
 }
 
+function isTronBase58(addr: string | undefined | null): addr is string {
+  return !!addr && /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(addr);
+}
+
+/** True when running inside Trust / TokenPocket / TronLink DApp browser (not Safari WC). */
+export function isInWalletDappBrowser(): boolean {
+  if (typeof window === "undefined") return false;
+  if (window.tronWeb || window.tronLink) return true;
+
+  const ua = navigator.userAgent || "";
+  if (/Trust\//i.test(ua) || /TokenPocket/i.test(ua) || /TronLink/i.test(ua) || /imToken/i.test(ua)) {
+    return true;
+  }
+
+  const eth = window.ethereum;
+  if (eth?.isTrust || eth?.isTokenPocket) return true;
+  if (eth?.providers?.some((p) => p.isTrust || p.isTokenPocket)) return true;
+  return false;
+}
+
+export function isMobileBrowser(): boolean {
+  if (typeof window === "undefined") return false;
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || "");
+}
+
+/**
+ * Open the CURRENT page inside Trust Wallet's injected DApp browser.
+ * This is required for tronWeb — WalletConnect "Open in wallet" alone is not enough.
+ */
+export function openInTrustWalletDapp(url?: string): void {
+  if (typeof window === "undefined") return;
+  const target = encodeURIComponent(url || window.location.href);
+  // coin_id 60 = ETH; Trust still injects tronWeb in the shared DApp browser
+  window.location.href = `https://link.trustwallet.com/open_url?coin_id=60&url=${target}`;
+}
+
 export function isTronProviderPresent(): boolean {
   if (typeof window === "undefined") return false;
-  // Trust Wallet DApp browser, TronLink extension, and some others inject
-  // either tronLink, tronWeb, or both. Check both.
   return Boolean(window.tronLink) || Boolean(window.tronWeb);
 }
 
@@ -97,71 +112,103 @@ export function isTronLinkInstalled(): boolean {
   return isTronProviderPresent();
 }
 
-/** Read a Tron base58 address if the provider already exposed one. */
-export function getConnectedTronAddress(): string | null {
+function readTronAddressFromProvider(): string | null {
   if (typeof window === "undefined") return null;
-  const tw = window.tronWeb as
-    | { ready?: boolean; defaultAddress?: { base58?: string } }
-    | undefined;
-  const addr = tw?.defaultAddress?.base58;
-  // Trust Wallet often sets defaultAddress before `ready` flips true —
-  // accept any valid T… address even if ready is still false.
-  if (addr && /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(addr)) return addr;
+
+  const candidates = [
+    window.tronWeb?.defaultAddress?.base58,
+    window.tronLink?.tronWeb?.defaultAddress?.base58,
+  ];
+  for (const addr of candidates) {
+    if (isTronBase58(addr)) return addr;
+  }
   return null;
 }
 
-/**
- * Wait briefly for Trust Wallet / TronLink to inject window.tronWeb.
- * DApp browsers often inject it 100–800ms after page load.
- */
-async function waitForTronWeb(timeoutMs = 3000): Promise<boolean> {
+/** Read a Tron base58 address if the provider already exposed one. */
+export function getConnectedTronAddress(): string | null {
+  return readTronAddressFromProvider();
+}
+
+async function waitForTronWeb(timeoutMs = 8000): Promise<boolean> {
   if (typeof window === "undefined") return false;
   if (window.tronWeb || window.tronLink) return true;
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    await new Promise((r) => setTimeout(r, 150));
-    if (window.tronWeb || window.tronLink) return true;
+
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (ok: boolean) => {
+      if (done) return;
+      done = true;
+      cleanup();
+      resolve(ok);
+    };
+
+    const onInit = () => finish(true);
+    const onMessage = (e: MessageEvent) => {
+      const action = (e.data as { message?: { action?: string } })?.message?.action;
+      if (action === "setAccount" || action === "setNode" || action === "tabReply") {
+        if (window.tronWeb || window.tronLink) finish(true);
+      }
+    };
+
+    window.addEventListener("tronWeb#initialized", onInit as EventListener);
+    window.addEventListener("tronLink#initialized", onInit as EventListener);
+    window.addEventListener("message", onMessage);
+
+    const poll = setInterval(() => {
+      if (window.tronWeb || window.tronLink) finish(true);
+    }, 200);
+
+    const timer = setTimeout(() => finish(false), timeoutMs);
+
+    function cleanup() {
+      clearInterval(poll);
+      clearTimeout(timer);
+      window.removeEventListener("tronWeb#initialized", onInit as EventListener);
+      window.removeEventListener("tronLink#initialized", onInit as EventListener);
+      window.removeEventListener("message", onMessage);
+    }
+  });
+}
+
+async function requestTronAccounts(): Promise<void> {
+  try {
+    if (window.tronLink?.request) {
+      await window.tronLink.request({ method: "tron_requestAccounts" });
+      return;
+    }
+    const tw = (window.tronLink?.tronWeb || window.tronWeb) as TronWebLike | undefined;
+    if (tw?.request) {
+      await tw.request({ method: "tron_requestAccounts" });
+    }
+  } catch {
+    // user rejected or unsupported — caller keeps polling
   }
-  return false;
 }
 
 /**
  * Ensure we have a Tron address for scanning/approving.
- * Works with TronLink extension AND Trust Wallet / TokenPocket DApp browsers.
- * Returns null if no Tron provider is present (e.g. desktop WalletConnect QR).
+ * Longer wait inside wallet DApp browsers where injection is delayed.
  */
 export async function ensureTronAddress(): Promise<string | null> {
   if (typeof window === "undefined") return null;
 
-  // Already have an address — use it immediately
   const existing = getConnectedTronAddress();
   if (existing) return existing;
 
-  // Wait for late injection (common in mobile DApp browsers)
-  const present = await waitForTronWeb(3000);
+  const inDapp = isInWalletDappBrowser();
+  // Safari/WC: no injection will ever appear — fail fast
+  // DApp browser: Trust often injects 1–5s after load / after eth connect
+  const waitMs = inDapp || isMobileBrowser() ? 8000 : 2500;
+  const present = await waitForTronWeb(waitMs);
   if (!present) return null;
 
-  // Try again after injection
   const afterWait = getConnectedTronAddress();
   if (afterWait) return afterWait;
 
-  // Request account access — TronLink / Trust Wallet both support this
-  try {
-    if (window.tronLink?.request) {
-      await window.tronLink.request({ method: "tron_requestAccounts" });
-    } else {
-      // Some DApp browsers put request on tronWeb instead of tronLink
-      const tw = window.tronWeb as unknown as { request?: (a: { method: string }) => Promise<unknown> } | undefined;
-      if (tw?.request) {
-        await tw.request({ method: "tron_requestAccounts" });
-      }
-    }
-  } catch {
-    // User rejected or provider doesn't support request — keep polling below
-  }
+  await requestTronAccounts();
 
-  // Poll until address appears (injection + account unlock can take a moment)
-  for (let i = 0; i < 24; i++) {
+  for (let i = 0; i < 40; i++) {
     const addr = getConnectedTronAddress();
     if (addr) return addr;
     await new Promise((r) => setTimeout(r, 250));
@@ -169,15 +216,10 @@ export async function ensureTronAddress(): Promise<string | null> {
   return null;
 }
 
-/// Requests account access from TronLink / Trust Wallet and returns the
-/// connected base58 address, or null if no Tron provider / user rejects.
 export async function connectTronLink(): Promise<string | null> {
   return ensureTronAddress();
 }
 
-// ---------------------------------------------------------------------------
-// Address conversion helpers
-// ---------------------------------------------------------------------------
 const BASE58_CHARS = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 function base58Decode(str: string): Uint8Array {
@@ -197,14 +239,9 @@ function base58Decode(str: string): Uint8Array {
   return bytes;
 }
 
-/**
- * Convert a Tron base58 address (T…) to checksummed EVM hex (0x…).
- * Tron mainnet addresses are 0x41 + 20 bytes; EVM is 0x + 20 bytes — same
- * underlying bytes, different prefix and encoding.
- */
 export function tronBase58ToHex(base58Addr: string): string {
   if (base58Addr.startsWith("0x") && base58Addr.length === 42) return base58Addr;
-  const decoded = base58Decode(base58Addr); // [0x41, ...20 bytes, ...4 byte checksum]
-  const addrBytes = decoded.slice(1, 21); // drop 0x41 prefix; ignore checksum
+  const decoded = base58Decode(base58Addr);
+  const addrBytes = decoded.slice(1, 21);
   return "0x" + Array.from(addrBytes).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
