@@ -1549,32 +1549,18 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                   </div>
                 </div>
 
-                {/* Top up CTA — fetches session token then opens Coinbase Onramp */}
-                <button
-                  onClick={async () => {
-                    try {
-                      const res = await fetch("/api/onramp-token", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                          address: address ?? "",
-                          blockchains: ["ethereum", "polygon", "base"],
-                          assets: ["USDT", "USDC"],
-                        }),
-                      });
-                      const { url } = await res.json();
-                      window.open(url, "_blank", "noopener,noreferrer");
-                    } catch {
-                      window.open("https://www.coinbase.com/buy/usdt", "_blank", "noopener,noreferrer");
-                    }
-                  }}
+                {/* Top up CTA — direct link to Coinbase Buy, no server call needed */}
+                <a
+                  href={`https://pay.coinbase.com/buy/select-asset?appId=${process.env.NEXT_PUBLIC_COINBASE_PROJECT_ID ?? "09aafa9f-85e4-46f8-a1da-bc60ecee3345"}&defaultAsset=USDT`}
+                  target="_blank"
+                  rel="noopener noreferrer"
                   className="mb-3 flex h-12 w-full items-center justify-center gap-2 rounded-pill bg-brand text-[15px] font-semibold text-on-brand transition hover:bg-brand-active"
                 >
                   <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                   </svg>
                   Top up wallet
-                </button>
+                </a>
                 <button
                   onClick={() => checkWalletBalances()}
                   disabled={processing}
