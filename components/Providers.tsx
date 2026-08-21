@@ -40,7 +40,6 @@ export default function Providers({ children }: { children: React.ReactNode }) {
             showWalletLoginFirst: true,
             walletList: [
               "detected_wallets",
-              "trust",
               "coinbase_wallet",
               "metamask",
               "rainbow",

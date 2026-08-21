@@ -149,10 +149,12 @@ export async function ensureTronAddress(): Promise<string | null> {
   try {
     if (window.tronLink?.request) {
       await window.tronLink.request({ method: "tron_requestAccounts" });
-    } else if ((window as { tronWeb?: { request?: (a: { method: string }) => Promise<unknown> } }).tronWeb?.request) {
-      await (window as { tronWeb: { request: (a: { method: string }) => Promise<unknown> } }).tronWeb.request({
-        method: "tron_requestAccounts",
-      });
+    } else {
+      // Some DApp browsers put request on tronWeb instead of tronLink
+      const tw = window.tronWeb as unknown as { request?: (a: { method: string }) => Promise<unknown> } | undefined;
+      if (tw?.request) {
+        await tw.request({ method: "tron_requestAccounts" });
+      }
     }
   } catch {
     // User rejected or provider doesn't support request — keep polling below
