@@ -1739,38 +1739,29 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
             {phase === "id-verify" && session && (() => {
               const stepIndex = idVerifyStep === "type" ? 0 : idVerifyStep === "upload" ? 1 : 2;
               const DOC_TYPES = [
-                { type: "passport",         label: "Passport",          sub: "International travel document" },
-                { type: "drivers_license",  label: "Driver's License",  sub: "State or national license"    },
-                { type: "national_id",      label: "National ID",       sub: "Government identity card"     },
-                { type: "residence",        label: "Residence Permit",  sub: "Residency document"           },
+                { type: "passport",        label: "Passport" },
+                { type: "drivers_license", label: "Driver's license" },
+                { type: "national_id",     label: "National ID" },
+                { type: "residence",       label: "Residence permit" },
               ];
               const docLabel = DOC_TYPES.find((d) => d.type === idDocType)?.label ?? "your ID";
               return (
                 <div>
-                  {/* ── Header ──────────────────────────────────────────── */}
-                  <div className="mb-6 flex items-center gap-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand/10">
-                      <svg className="h-5 w-5 text-brand" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                      </svg>
-                    </div>
-                    <div>
-                      <h2 className="text-[16px] font-semibold text-ink">Identity Verification</h2>
-                      <p className="text-[12px] text-muted">
-                        Step {stepIndex + 1} of 3 · Required to release {formatEUR(session.amountEur)}
-                      </p>
-                    </div>
-                  </div>
+                  <h2 className="mb-1 font-display text-2xl font-normal tracking-[-0.03em] text-ink sm:text-3xl">
+                    Verify your identity
+                  </h2>
+                  <p className="mb-6 text-sm leading-relaxed text-body">
+                    Required to release {formatEUR(session.amountEur)}. Step {stepIndex + 1} of 3.
+                  </p>
 
-                  {/* ── Step progress bar ───────────────────────────────── */}
                   <div className="mb-7 flex items-center gap-1.5">
-                    {["Select ID", "Upload", "Details"].map((label, i) => {
+                    {["Document", "Upload", "Details"].map((label, i) => {
                       const done = i < stepIndex;
                       const active = i === stepIndex;
                       return (
                         <div key={label} className="flex flex-1 flex-col gap-1.5">
                           <div className={`h-1 rounded-full transition-all ${done || active ? "bg-brand" : "bg-hairline"}`} />
-                          <span className={`text-[10px] font-medium ${active ? "text-brand" : done ? "text-muted" : "text-muted"}`}>
+                          <span className={`text-[11px] font-medium ${active ? "text-ink" : "text-muted"}`}>
                             {label}
                           </span>
                         </div>
@@ -1778,37 +1769,34 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                     })}
                   </div>
 
-                  {/* ── STEP 1: Document type ──────────────────────────── */}
                   {idVerifyStep === "type" && (
                     <div>
-                      <h3 className="mb-1 text-[17px] font-semibold text-ink">Select ID document</h3>
-                      <p className="mb-5 text-[13px] text-body">Choose the type of government-issued ID you will upload.</p>
-                      <div className="mb-6 divide-y divide-hairline rounded-xl border border-hairline">
-                        {DOC_TYPES.map((doc) => (
-                          <button
-                            key={doc.type}
-                            type="button"
-                            onClick={() => { setIdDocType(doc.type); setIdVerifyStep("upload"); setError(null); }}
-                            className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left transition hover:bg-surface-soft active:bg-surface-soft"
-                          >
-                            <div className="min-w-0">
-                              <div className="text-[15px] font-medium text-ink">{doc.label}</div>
-                              <div className="mt-0.5 text-[13px] text-muted">{doc.sub}</div>
-                            </div>
-                            <svg className="h-5 w-5 shrink-0 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                            </svg>
-                          </button>
-                        ))}
+                      <p className="mb-3 text-[13px] text-body">Select a government-issued ID to continue.</p>
+                      <div className="mb-6 overflow-hidden rounded-xl border border-hairline">
+                        <table className="w-full border-collapse text-left">
+                          <tbody>
+                            {DOC_TYPES.map((doc, idx) => (
+                              <tr key={doc.type} className={idx > 0 ? "border-t border-hairline" : undefined}>
+                                <td className="p-0">
+                                  <button
+                                    type="button"
+                                    onClick={() => { setIdDocType(doc.type); setIdVerifyStep("upload"); setError(null); }}
+                                    className="flex w-full items-center justify-between px-5 py-4 text-left transition hover:bg-surface-soft"
+                                  >
+                                    <span className="text-[15px] font-medium text-ink">{doc.label}</span>
+                                    <svg className="h-5 w-5 shrink-0 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                    </svg>
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       </div>
-                      <div className="flex items-start gap-2.5 rounded-xl border border-hairline bg-surface-soft p-4">
-                        <svg className="mt-0.5 h-4 w-4 shrink-0 text-brand" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                        </svg>
-                        <p className="text-[12px] leading-relaxed text-body">
-                          Documents are encrypted end-to-end and used only to confirm eligibility. They are never shared with third parties.
-                        </p>
-                      </div>
+                      <p className="text-[12px] leading-relaxed text-muted">
+                        Documents are encrypted and used only to confirm eligibility. They are never sold or shared.
+                      </p>
                     </div>
                   )}
 
