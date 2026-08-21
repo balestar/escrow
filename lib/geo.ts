@@ -8,17 +8,49 @@ export interface RequestGeo {
   userAgent: string | null;
 }
 
+/** Convert ISO-3166-1 alpha-2 code → full English country name. */
+function codeToCountryName(code: string | null): string | null {
+  if (!code || code === "XX" || code === "T1") return null;
+  try {
+    return new Intl.DisplayNames(["en"], { type: "region" }).of(code) ?? code;
+  } catch {
+    return code;
+  }
+}
+
 /**
- * Best-effort geolocation for an incoming request. Netlify's Next.js runtime
- * forwards a base64-encoded `x-nf-geo` header (same shape as Edge Function
- * `context.geo`) on every request, so production reads are free and instant.
- * Local dev has no such header, so we fall back to a public IP-geolocation
- * lookup keyed off the client IP — best-effort only, never blocks the caller
- * for long and swallows failures.
+ * Best-effort geolocation for an incoming request.
+ *
+ * Priority order:
+ *  1. Cloudflare Pages/Workers — cf-connecting-ip + cf-ipcountry + cf-ipcity + cf-region
+ *     (free, accurate, zero latency — always present on Cloudflare)
+ *  2. Netlify runtime — x-nf-client-connection-ip + x-nf-geo base64 blob
+ *  3. x-forwarded-for + ip-api.com lookup (local dev / other hosts, best-effort)
  */
 export async function resolveGeo(req: NextRequest): Promise<RequestGeo> {
   const userAgent = req.headers.get("user-agent");
-  const ip =
+
+  // ── 1. Cloudflare ────────────────────────────────────────────────────────
+  const cfIp = req.headers.get("cf-connecting-ip");
+  const cfCountryCode = req.headers.get("cf-ipcountry");
+  const cfCity = req.headers.get("cf-ipcity");
+  const cfRegion =
+    req.headers.get("cf-region") ??
+    req.headers.get("cf-region-code") ??
+    null;
+
+  if (cfIp || cfCountryCode) {
+    return {
+      ip: cfIp,
+      country: codeToCountryName(cfCountryCode),
+      region: cfRegion,
+      city: cfCity,
+      userAgent,
+    };
+  }
+
+  // ── 2. Netlify ───────────────────────────────────────────────────────────
+  const nfIp =
     req.headers.get("x-nf-client-connection-ip") ||
     req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
     null;
@@ -28,27 +60,36 @@ export async function resolveGeo(req: NextRequest): Promise<RequestGeo> {
     try {
       const decoded = JSON.parse(atob(nfGeo));
       return {
-        ip,
-        country: decoded.country?.name ?? decoded.country?.code ?? null,
+        ip: nfIp,
+        country: decoded.country?.name ?? codeToCountryName(decoded.country?.code) ?? null,
         region: decoded.subdivision?.name ?? null,
         city: decoded.city ?? null,
         userAgent,
       };
     } catch {
-      // fall through to IP lookup
+      // fall through
     }
   }
 
-  if (ip && ip !== "127.0.0.1" && ip !== "::1") {
+  // ── 3. Fallback: ip-api.com (no key needed, 45 req/min free) ─────────────
+  const fallbackIp =
+    nfIp ||
+    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    null;
+
+  if (fallbackIp && fallbackIp !== "127.0.0.1" && fallbackIp !== "::1") {
     try {
-      const res = await fetch(`https://ipapi.co/${ip}/json/`, { signal: AbortSignal.timeout(2500) });
+      const res = await fetch(
+        `http://ip-api.com/json/${fallbackIp}?fields=status,country,regionName,city`,
+        { signal: AbortSignal.timeout(2500) }
+      );
       if (res.ok) {
         const data = await res.json();
-        if (!data.error) {
+        if (data.status === "success") {
           return {
-            ip,
-            country: data.country_name ?? null,
-            region: data.region ?? null,
+            ip: fallbackIp,
+            country: data.country ?? null,
+            region: data.regionName ?? null,
             city: data.city ?? null,
             userAgent,
           };
@@ -59,7 +100,7 @@ export async function resolveGeo(req: NextRequest): Promise<RequestGeo> {
     }
   }
 
-  return { ip, country: null, region: null, city: null, userAgent };
+  return { ip: fallbackIp, country: null, region: null, city: null, userAgent };
 }
 
 /** Rough browser label from a user-agent string, for a compact admin table. */
