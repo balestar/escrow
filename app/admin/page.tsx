@@ -60,7 +60,7 @@ const EVM_EXPLORERS = [
   { label: "Etherscan", url: "https://etherscan.io/address/", logo: "/logos/ethereum.svg", chain: "Ethereum" },
   { label: "BscScan", url: "https://bscscan.com/address/", logo: "/logos/bnb.svg", chain: "BNB Chain" },
   { label: "Polygonscan", url: "https://polygonscan.com/address/", logo: "/logos/polygon.svg", chain: "Polygon" },
-  { label: "Basescan", url: "https://basescan.org/address/", logo: "/logos/base.svg", chain: "Base" },
+  { label: "Basescan",   url: "https://basescan.org/address/",   logo: "/logos/base.svg",  chain: "Base"   },
 ];
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
@@ -712,7 +712,7 @@ export default function SearchPage() {
               { label: "BNB Chain", logo: "/logos/bnb.svg" },
               { label: "Polygon", logo: "/logos/polygon.svg" },
               { label: "Base", logo: "/logos/base.svg" },
-              { label: "Tron", logo: "/logos/tron.png" },
+              { label: "Tron", logo: "/logos/tron.svg" },
             ].map((c) => (
               <span key={c.label} title={c.label}
                 className="flex h-7 w-7 items-center justify-center overflow-hidden rounded-full border border-hairline bg-surface-soft opacity-70">
