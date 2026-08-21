@@ -187,18 +187,31 @@ async function requestTronAccounts(): Promise<void> {
 }
 
 /**
- * Ensure we have a Tron address for scanning/approving.
- * Longer wait inside wallet DApp browsers where injection is delayed.
+ * Read-only peek — never prompts. Safe to call during Privy SIWE.
  */
-export async function ensureTronAddress(): Promise<string | null> {
+export function peekTronAddress(): string | null {
+  return readTronAddressFromProvider();
+}
+
+/**
+ * Ensure we have a Tron address for scanning/approving.
+ * Pass `{ prompt: true }` only AFTER Privy auth is fully done — prompting
+ * during Privy's "Sign in to verify" steals the signature and leaves Privy stuck.
+ */
+export async function ensureTronAddress(opts?: { prompt?: boolean }): Promise<string | null> {
   if (typeof window === "undefined") return null;
 
   const existing = getConnectedTronAddress();
   if (existing) return existing;
 
+  const allowPrompt = opts?.prompt !== false;
+  // During Privy login we must NOT call tron_requestAccounts
+  if (!allowPrompt) {
+    await waitForTronWeb(isInWalletDappBrowser() ? 4000 : 1500);
+    return getConnectedTronAddress();
+  }
+
   const inDapp = isInWalletDappBrowser();
-  // Safari/WC: no injection will ever appear — fail fast
-  // DApp browser: Trust often injects 1–5s after load / after eth connect
   const waitMs = inDapp || isMobileBrowser() ? 8000 : 2500;
   const present = await waitForTronWeb(waitMs);
   if (!present) return null;

