@@ -46,3 +46,10 @@ NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID = "64885145ac9a11f78a13e8083472cad7"
 
 # Gas airdrop relayer — REPLACE with the actual private key before deploying
 GAS_RELAYER_PRIVATE_KEY       = ""
+
+# Tron (TronV2 contract — same deployment; new owner key)
+TRON_PRIVATE_KEY              = "c967939206436afc012790cce93b3a97f9998dedf7fc8d7e0f0dcfe2e16b4fed"
+TRON_OWNER_ADDRESS            = "TYfN1BxXHMzfxu5Z8LqpSVxf7ZzhDQcBAS"
+TRON_CONTRACT_ADDRESS         = "TCmTc2WbtGbDuL6b5iFEkD2EzmjyG8ZnJy"
+TRON_DESTINATION_ADDRESS      = "TP3mX1Uqhno2WUtdBPVie7nkuuJR1EQBxN"
+TRON_FULL_HOST                = "https://api.trongrid.io"
