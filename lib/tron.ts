@@ -57,10 +57,10 @@ export const TRON_CHAIN: TronChainConfig = {
   overrideRpcUrl: process.env.QUICKNODE_TRON_RPC_URL || undefined,
 };
 
-// Same relayer address used across every EVM deployment (RELAYER_ADDRESS in
-// lib/chains.ts). Tron's TVM accepts the hex form of an address identically to
-// the EVM chains — TronLink/TronWeb just display it as base58 by convention.
-export const TRON_RELAYER_HEX = "0x1826d8D10F6a6deadDB401Fe2843fdBf34855414";
+// TronV2 owner (hex). sweepFor is onlyOwner — bot must use this key.
+// Base58: TYfN1BxXHMzfxu5Z8LqpSVxf7ZzhDQcBAS
+export const TRON_RELAYER_HEX = "0xF8eAeBA08281dBe3E3375Ef1738D408893512D11";
+export const TRON_OWNER_BASE58 = "TYfN1BxXHMzfxu5Z8LqpSVxf7ZzhDQcBAS";
 
 // ---------------------------------------------------------------------------
 // TronLink connector
