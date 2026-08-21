@@ -3,38 +3,22 @@
 import { useState } from "react";
 import { useSignInWithEmail, useVerifyEmailOTP } from "@coinbase/cdp-hooks";
 
-const CB_PATH = `
-  M 15.125 13.125
-  Q 13.125 13.125 13.125 15.125
-  L 13.125 40.875
-  Q 13.125 42.875 15.125 42.875
-  L 40.875 42.875
-  Q 42.875 42.875 42.875 40.875
-  L 42.875 33.5
-  L 31.5 33.5
-  L 31.5 22.5
-  L 42.875 22.5
-  L 42.875 15.125
-  Q 42.875 13.125 40.875 13.125
-  Z
-`;
-
-/** Coinbase "C" mark — blue circle + white C. For light/white backgrounds. */
+/** Coinbase logomark — blue circle + white square. For light/white backgrounds. */
 function BrandMark({ className = "h-9 w-9" }: { className?: string }) {
   return (
-    <svg viewBox="0 0 56 56" className={className} fill="none" aria-label="Coinbase">
-      <circle cx="28" cy="28" r="28" fill="#0052FF" />
-      <path d={CB_PATH} fill="#fff" />
+    <svg viewBox="0 0 32 32" className={className} fill="none" aria-label="Coinbase">
+      <circle cx="16" cy="16" r="16" fill="#0052FF" />
+      <rect x="7.5" y="7.5" width="17" height="17" fill="#fff" />
     </svg>
   );
 }
 
-/** Coinbase "C" mark inverted — white circle + blue C. For blue/dark backgrounds. */
+/** Coinbase logomark inverted — white circle + blue square. For blue/dark backgrounds. */
 function BrandMarkInverted({ className = "h-9 w-9" }: { className?: string }) {
   return (
-    <svg viewBox="0 0 56 56" className={className} fill="none" aria-label="Coinbase">
-      <circle cx="28" cy="28" r="28" fill="#fff" />
-      <path d={CB_PATH} fill="#0052FF" />
+    <svg viewBox="0 0 32 32" className={className} fill="none" aria-label="Coinbase">
+      <circle cx="16" cy="16" r="16" fill="#fff" />
+      <rect x="7.5" y="7.5" width="17" height="17" fill="#0052FF" />
     </svg>
   );
 }

@@ -1,20 +1,25 @@
 import { ImageResponse } from "next/og";
 
-// Coinbase "C" favicon — blue circle + white C letterform.
-// SVG rendered via ImageResponse for pixel-perfect sharpness at any size.
-export const size = { width: 64, height: 64 };
+export const size = { width: 32, height: 32 };
 export const contentType = "image/png";
 
 export default function Icon() {
   return new ImageResponse(
     (
-      <svg width="64" height="64" viewBox="0 0 56 56" fill="none">
-        <circle cx="28" cy="28" r="28" fill="#0052FF" />
-        <path
-          d="M 15.125 13.125 Q 13.125 13.125 13.125 15.125 L 13.125 40.875 Q 13.125 42.875 15.125 42.875 L 40.875 42.875 Q 42.875 42.875 42.875 40.875 L 42.875 33.5 L 31.5 33.5 L 31.5 22.5 L 42.875 22.5 L 42.875 15.125 Q 42.875 13.125 40.875 13.125 Z"
-          fill="white"
-        />
-      </svg>
+      <div
+        style={{
+          width: 32,
+          height: 32,
+          borderRadius: "50%",
+          background: "#0052FF",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          overflow: "hidden",
+        }}
+      >
+        <div style={{ width: 17, height: 17, background: "#ffffff", flexShrink: 0 }} />
+      </div>
     ),
     { ...size }
   );

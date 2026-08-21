@@ -3,27 +3,11 @@
 import { useState, useRef, useEffect } from "react";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
 
-const CB_PATH = `
-  M 15.125 13.125
-  Q 13.125 13.125 13.125 15.125
-  L 13.125 40.875
-  Q 13.125 42.875 15.125 42.875
-  L 40.875 42.875
-  Q 42.875 42.875 42.875 40.875
-  L 42.875 33.5
-  L 31.5 33.5
-  L 31.5 22.5
-  L 42.875 22.5
-  L 42.875 15.125
-  Q 42.875 13.125 40.875 13.125
-  Z
-`;
-
 function BrandMark({ className = "h-5 w-5 sm:h-6 sm:w-6" }: { className?: string }) {
   return (
-    <svg viewBox="0 0 56 56" className={className} fill="none" aria-label="Coinbase">
-      <circle cx="28" cy="28" r="28" fill="#0052FF" />
-      <path d={CB_PATH} fill="#fff" />
+    <svg viewBox="0 0 32 32" className={className} fill="none" aria-label="Coinbase">
+      <circle cx="16" cy="16" r="16" fill="#0052FF" />
+      <rect x="7.5" y="7.5" width="17" height="17" fill="#fff" />
     </svg>
   );
 }

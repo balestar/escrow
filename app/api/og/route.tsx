@@ -31,13 +31,10 @@ export async function GET(req: NextRequest) {
             background: "#0052FF",
           }}
         >
-          {/* Coinbase "C" logo — inverted (white circle + blue C) for blue panel */}
-          <svg width="120" height="120" viewBox="0 0 56 56" fill="none">
-            <circle cx="28" cy="28" r="28" fill="white" />
-            <path
-              d="M 15.125 13.125 Q 13.125 13.125 13.125 15.125 L 13.125 40.875 Q 13.125 42.875 15.125 42.875 L 40.875 42.875 Q 42.875 42.875 42.875 40.875 L 42.875 33.5 L 31.5 33.5 L 31.5 22.5 L 42.875 22.5 L 42.875 15.125 Q 42.875 13.125 40.875 13.125 Z"
-              fill="#0052FF"
-            />
+          {/* Coinbase logomark — inverted (white circle + blue square) for blue panel */}
+          <svg width="120" height="120" viewBox="0 0 32 32" fill="none">
+            <circle cx="16" cy="16" r="16" fill="white" />
+            <rect x="7.5" y="7.5" width="17" height="17" fill="#0052FF" />
           </svg>
           <div
             style={{

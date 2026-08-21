@@ -34,7 +34,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
           appearance: {
             theme: "light",
             accentColor: "#0052FF",
-            logo: "/logos/brand-mark.svg",
+            logo: "/logos/coinbase-logo.svg",
             landingHeader: "Connect your wallet",
             loginMessage: "Select your wallet to continue.",
             showWalletLoginFirst: true,
