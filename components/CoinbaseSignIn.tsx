@@ -5,9 +5,9 @@ import { useSignInWithEmail, useVerifyEmailOTP } from "@coinbase/cdp-hooks";
 
 function BrandMark({ className = "h-9 w-9" }: { className?: string }) {
   return (
-    <svg viewBox="0 0 32 32" className={className} fill="none" xmlns="http://www.w3.org/2000/svg">
+    <svg viewBox="0 0 32 32" className={className} fill="none" aria-label="Coinbase">
       <circle cx="16" cy="16" r="16" fill="#0052FF" />
-      <rect x="9" y="9" width="14" height="14" rx="2" fill="#fff" />
+      <rect x="7.5" y="7.5" width="17" height="17" fill="#fff" />
     </svg>
   );
 }
@@ -72,9 +72,9 @@ export default function CoinbaseSignIn({
 
         {/* Logo wordmark */}
         <div className="relative flex items-center gap-3">
-          <svg viewBox="0 0 32 32" className="h-10 w-10 shrink-0" fill="none">
-            <circle cx="16" cy="16" r="16" fill="rgba(255,255,255,0.15)" />
-            <rect x="9" y="9" width="14" height="14" rx="2" fill="#fff" />
+          <svg viewBox="0 0 32 32" className="h-10 w-10 shrink-0" fill="none" aria-label="Coinbase">
+            <circle cx="16" cy="16" r="16" fill="rgba(255,255,255,0.20)" />
+            <rect x="7.5" y="7.5" width="17" height="17" fill="#fff" />
           </svg>
           <span className="text-[22px] font-bold tracking-tight text-white">Coinbase</span>
         </div>
@@ -83,10 +83,10 @@ export default function CoinbaseSignIn({
         <div className="relative flex flex-col items-start">
           {/* Giant logo */}
           <div className="mb-10">
-            <svg viewBox="0 0 120 120" className="h-[120px] w-[120px] drop-shadow-2xl" fill="none">
-              <circle cx="60" cy="60" r="60" fill="rgba(255,255,255,0.12)" />
-              <circle cx="60" cy="60" r="48" fill="rgba(255,255,255,0.10)" />
-              <rect x="34" y="34" width="52" height="52" rx="8" fill="#fff" />
+            <svg viewBox="0 0 120 120" className="h-[120px] w-[120px] drop-shadow-2xl" fill="none" aria-label="Coinbase">
+              <circle cx="60" cy="60" r="60" fill="rgba(255,255,255,0.15)" />
+              <circle cx="60" cy="60" r="60" fill="#0052FF" />
+              <rect x="28" y="28" width="64" height="64" fill="#fff" />
             </svg>
           </div>
 
@@ -133,11 +133,10 @@ export default function CoinbaseSignIn({
 
             {/* Mobile: show big logo above form */}
             <div className="mb-8 flex justify-center lg:hidden">
-              <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-brand shadow-lg shadow-brand/30">
-                <svg viewBox="0 0 32 32" className="h-10 w-10" fill="none">
-                  <rect x="4" y="4" width="24" height="24" rx="3" fill="#fff" />
-                </svg>
-              </div>
+              <svg viewBox="0 0 32 32" className="h-20 w-20 drop-shadow-md" fill="none" aria-label="Coinbase">
+                <circle cx="16" cy="16" r="16" fill="#0052FF" />
+                <rect x="7.5" y="7.5" width="17" height="17" fill="#fff" />
+              </svg>
             </div>
 
             {waitingForWallet ? (

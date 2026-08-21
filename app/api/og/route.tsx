@@ -31,10 +31,10 @@ export async function GET(req: NextRequest) {
             background: "#0052FF",
           }}
         >
-          {/* Coinbase logo mark */}
+          {/* Coinbase logo mark — blue circle, white square cutout, no rounding */}
           <svg width="120" height="120" viewBox="0 0 120 120" fill="none">
-            <circle cx="60" cy="60" r="60" fill="rgba(255,255,255,0.15)" />
-            <rect x="28" y="28" width="64" height="64" rx="10" fill="white" />
+            <circle cx="60" cy="60" r="60" fill="#0052FF" />
+            <rect x="28" y="28" width="64" height="64" fill="white" />
           </svg>
           <div
             style={{

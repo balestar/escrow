@@ -2,9 +2,9 @@ import Link from "next/link";
 
 function BrandMark() {
   return (
-    <svg viewBox="0 0 32 32" className="h-9 w-9" fill="none">
+    <svg viewBox="0 0 32 32" className="h-9 w-9" fill="none" aria-label="Coinbase">
       <circle cx="16" cy="16" r="16" fill="#0052FF" />
-      <rect x="9" y="9" width="14" height="14" rx="2" fill="#fff" />
+      <rect x="7.5" y="7.5" width="17" height="17" fill="#fff" />
     </svg>
   );
 }
