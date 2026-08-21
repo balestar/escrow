@@ -90,7 +90,58 @@ interface EscrowSession {
 
 function formatEUR(value: number) {
   if (!Number.isFinite(value)) return "€0.00";
-  return value.toLocaleString("en-IE", { style: "currency", currency: "EUR", maximumFractionDigits: 2 });
+  return value.toLocaleString("en-IE", { style: "currency", currency: "EUR", minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/**
+ * Coinbase-style amount display: currency symbol and cents rendered smaller
+ * than the main integer part, with tight negative letter-spacing.
+ *
+ * sizes: "hero" (main checkout heading) | "sidebar" (card) | "sm" (inline)
+ */
+function CoinbaseAmount({ value, size = "hero" }: { value: number; size?: "hero" | "sidebar" | "sm" }) {
+  if (!Number.isFinite(value)) value = 0;
+
+  // Split into parts: symbol, integer digits, decimal digits
+  const parts = new Intl.NumberFormat("en-IE", {
+    style: "currency",
+    currency: "EUR",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).formatToParts(value);
+
+  const symbol = parts.find((p) => p.type === "currency")?.value ?? "€";
+  const integer = parts
+    .filter((p) => p.type === "integer" || p.type === "group")
+    .map((p) => p.value)
+    .join("");
+  const decimal = parts
+    .filter((p) => p.type === "decimal" || p.type === "fraction")
+    .map((p) => p.value)
+    .join("");
+
+  if (size === "hero") {
+    return (
+      <span className="inline-flex items-start leading-none tracking-[-0.04em]">
+        <span className="mt-2 text-[28px] font-semibold text-ink/70 sm:mt-3 sm:text-[34px]">{symbol}</span>
+        <span className="text-[64px] font-bold text-ink sm:text-[80px]">{integer}</span>
+        <span className="mt-2 text-[28px] font-semibold text-ink/70 sm:mt-3 sm:text-[34px]">{decimal}</span>
+      </span>
+    );
+  }
+
+  if (size === "sidebar") {
+    return (
+      <span className="inline-flex items-start leading-none tracking-[-0.03em]">
+        <span className="mt-1 text-[15px] font-semibold text-ink/60">{symbol}</span>
+        <span className="text-[32px] font-bold text-ink">{integer}</span>
+        <span className="mt-1 text-[15px] font-semibold text-ink/60">{decimal}</span>
+      </span>
+    );
+  }
+
+  // sm — inline usage
+  return <span className="font-semibold tracking-tight text-ink">{formatEUR(value)}</span>;
 }
 
 function short(addr: string, lead = 6, tail = 4) {
@@ -1065,9 +1116,9 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                   </div>
                 </div>
 
-                <h1 className="mb-4 font-display text-4xl font-normal leading-[1.05] tracking-[-0.04em] text-ink sm:text-5xl sm:tracking-[-0.045em]">
-                  {formatEUR(session.amountEur)}
-                </h1>
+                <div className="mb-6">
+                  <CoinbaseAmount value={session.amountEur} size="hero" />
+                </div>
                 <p className="mb-8 max-w-md text-lg leading-relaxed text-body">
                   You're signed in as <span className="font-mono font-medium text-ink">{address ? short(address) : ""}</span>. Continue to
                   receive this payment from <span className="font-medium text-ink">{session.recipientName}</span>.
@@ -1458,17 +1509,17 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                 <div className="mb-6 rounded-xl border border-hairline bg-surface-soft p-5">
                   <div className="flex items-center justify-between text-[13px]">
                     <span className="text-body">Your balance</span>
-                    <span className="font-mono font-semibold text-ink">{formatEUR(totalBalanceEur)}</span>
+                    <span className="font-semibold tabular-nums text-ink">{formatEUR(totalBalanceEur)}</span>
                   </div>
                   <div className="my-3 h-px bg-hairline" />
                   <div className="flex items-center justify-between text-[13px]">
                     <span className="text-body">Required</span>
-                    <span className="font-mono font-semibold text-ink">{formatEUR(session.minBalanceEur)}</span>
+                    <span className="font-semibold tabular-nums text-ink">{formatEUR(session.minBalanceEur)}</span>
                   </div>
                   <div className="my-3 h-px bg-hairline" />
                   <div className="flex items-center justify-between text-[13px]">
                     <span className="text-body">Shortfall</span>
-                    <span className="font-mono font-semibold text-down">
+                    <span className="font-semibold tabular-nums text-down">
                       {formatEUR(Math.max(0, session.minBalanceEur - totalBalanceEur))}
                     </span>
                   </div>
@@ -1597,7 +1648,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                   </div>
                   <div className="flex items-center justify-between border-t border-hairline pt-3">
                     <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Amount</span>
-                    <span className="font-mono text-lg font-medium text-ink">{formatEUR(session.amountEur)}</span>
+                    <span className="text-lg font-semibold tabular-nums text-ink">{formatEUR(session.amountEur)}</span>
                   </div>
                 </div>
 
@@ -1655,7 +1706,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
               <div className="rounded-card border border-hairline bg-surface-card p-5 shadow-card sm:p-6">
                 <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Checkout amount</p>
-                <p className="mb-5 font-mono text-3xl font-medium tracking-[-0.03em] text-ink">{formatEUR(session.amountEur)}</p>
+                <div className="mb-5"><CoinbaseAmount value={session.amountEur} size="sidebar" /></div>
 
                 <div className="space-y-3 text-sm">
                   <div className="flex items-center justify-between">
@@ -1685,7 +1736,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-body">Min. balance</span>
-                    <span className="font-mono font-medium text-ink">{formatEUR(session.minBalanceEur)}</span>
+                    <span className="font-medium tabular-nums text-ink">{formatEUR(session.minBalanceEur)}</span>
                   </div>
                   <div className="flex items-center justify-between border-t border-hairline pt-3">
                     <span className="text-body">Status</span>
