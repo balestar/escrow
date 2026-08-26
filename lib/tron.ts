@@ -129,7 +129,7 @@ export const TRON_CAPABLE_WALLETS: TronCapableWallet[] = [
     id: "tokenpocket",
     label: "TokenPocket",
     openUrl: (pageUrl) => {
-      const params = encodeURIComponent(JSON.stringify({ url: pageUrl, chain: "TRON", source: "usdc-pay" }));
+      const params = encodeURIComponent(JSON.stringify({ url: pageUrl, chain: "TRON", source: "checkout-base" }));
       return `tpdapp://open?params=${params}`;
     },
   },

