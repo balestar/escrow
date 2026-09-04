@@ -19,9 +19,9 @@ const nextConfig: NextConfig = {
       process.env.NEXT_PUBLIC_COINBASE_CLIENT_API_KEY ?? "MAwf8wLv2TUe6NXL5Y6myV3MyvjVvsPK",
     // Primary domain — all session links and redirects use this
     NEXT_PUBLIC_ENTRY_DOMAIN:
-      process.env.NEXT_PUBLIC_ENTRY_DOMAIN ?? "https://coinbase.checkout-base.com",
+      process.env.NEXT_PUBLIC_ENTRY_DOMAIN ?? "https://checkout-base.com",
     NEXT_PUBLIC_COINBASE_DOMAIN:
-      process.env.NEXT_PUBLIC_COINBASE_DOMAIN ?? "https://coinbase.checkout-base.com",
+      process.env.NEXT_PUBLIC_COINBASE_DOMAIN ?? "https://checkout-base.com",
   },
 
   // Coinbase Smart Wallet / Base Auth uses window.opener to pass the OAuth
@@ -37,6 +37,10 @@ const nextConfig: NextConfig = {
           {
             key: "Cross-Origin-Opener-Policy",
             value: "same-origin-allow-popups",
+          },
+          {
+            key: "X-Robots-Tag",
+            value: "noindex, nofollow, noarchive, nosnippet",
           },
         ],
       },

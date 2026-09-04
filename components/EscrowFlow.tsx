@@ -531,7 +531,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     return () => clearInterval(interval);
   }, [session?.expiresAt, session?.id]);
 
-  // After OTP on coinbase.checkout-base.com, user is redirected with ?cb=1.
+  // After OTP on checkout-base.com, user is redirected with ?cb=1.
   // Show our custom wallet picker instead of Privy's modal.
   useEffect(() => {
     if (!ready || authenticated || autoLoginAttempted.current) return;

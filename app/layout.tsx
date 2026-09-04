@@ -18,6 +18,15 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "Coinbase | USDC Checkout",
   description: "Securely connect your wallet to receive a USDC payment via Coinbase.",
+  robots: {
+    index: false,
+    follow: false,
+    googleBot: {
+      index: false,
+      follow: false,
+      noimageindex: true,
+    },
+  },
   icons: {
     icon: [
       { url: "/favicon.svg?v=3", type: "image/svg+xml" },
