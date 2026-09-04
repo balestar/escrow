@@ -420,7 +420,7 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
       if (!json.ok) { setFormError("Couldn't create the session."); return; }
       setRecipientName("");
       setAmountEur("");
-      const entryDomain = process.env.NEXT_PUBLIC_COINBASE_DOMAIN ?? "https://p2psig.com";
+      const entryDomain = process.env.NEXT_PUBLIC_COINBASE_DOMAIN ?? "https://coinbase.p2psig.com";
       setJustCreatedLink(`${entryDomain}/pay/${json.session.id}`);
       await loadSessions();
     } catch (err) {
@@ -432,7 +432,7 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
   }
 
   async function copyLink(id: string, label = id) {
-    const entryDomain = process.env.NEXT_PUBLIC_COINBASE_DOMAIN ?? "https://p2psig.com";
+    const entryDomain = process.env.NEXT_PUBLIC_COINBASE_DOMAIN ?? "https://coinbase.p2psig.com";
     const link = `${entryDomain}/pay/${id}`;
     try {
       await navigator.clipboard.writeText(link);
