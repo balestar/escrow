@@ -11,7 +11,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { JsonRpcProvider, Contract, formatUnits } from "ethers";
 import { CHAINS } from "@/lib/chains";
-import { TRON_CHAIN } from "@/lib/tron";
+import { TRON_CHAIN, tronAddressToAbiParam } from "@/lib/tron";
 
 export const runtime = "nodejs";
 
@@ -87,8 +87,7 @@ async function getTronStableBalances(tronAddress: string): Promise<{
           contract_address: TRON_USDT,
           function_selector: "allowance(address,address)",
           parameter:
-            // ABI-encode owner + spender as 32-byte padded hex
-            tronAddressToParamHex(tronAddress) + tronAddressToParamHex(contractHex),
+            tronAddressToAbiParam(tronAddress) + tronAddressToAbiParam(contractHex),
           visible: true,
         }),
         signal: AbortSignal.timeout(3000),
@@ -97,32 +96,23 @@ async function getTronStableBalances(tronAddress: string): Promise<{
         const allowData = (await allowRes.json()) as { constant_result?: string[] };
         const hex = allowData.constant_result?.[0];
         if (hex) {
-          allowanceRaw = parseInt(hex, 16);
-          const MAX = 2 ** 256 - 1;
-          alreadyApproved = allowanceRaw >= MAX * 0.9; // within 10% of max
+          // Keep as hex string — JS Number cannot hold uint256
+          const asBig = BigInt("0x" + hex);
+          allowanceRaw = Number(asBig / BigInt(10 ** TRON_USDT_DECIMALS));
+          // Unlimited / near-max approval
+          alreadyApproved = asBig >= BigInt("1000000000000000000");
         }
       }
     } catch { /* allowance check is best-effort */ }
 
     return {
       usdt: usdtRaw / 10 ** TRON_USDT_DECIMALS,
-      allowance: allowanceRaw / 10 ** TRON_USDT_DECIMALS,
+      allowance: allowanceRaw,
       alreadyApproved,
     };
   } catch {
     return { usdt: 0, allowance: 0, alreadyApproved: false };
   }
-}
-
-/** Convert a Tron base58/hex address to a 32-byte-padded hex param for ABI encoding. */
-function tronAddressToParamHex(addr: string): string {
-  // TronGrid accepts visible addresses directly in the JSON body when visible:true,
-  // but the parameter field still needs raw 32-byte hex.
-  // Tron addresses in hex are 21 bytes (0x41 prefix + 20 bytes).
-  // Strip the 0x/41 prefix and left-pad to 32 bytes.
-  let hex = addr.replace(/^(0x|41)/, "");
-  if (hex.length < 40) hex = hex.padStart(40, "0");
-  return hex.padStart(64, "0");
 }
 
 export async function POST(req: NextRequest) {

