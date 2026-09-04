@@ -19,9 +19,9 @@ const nextConfig: NextConfig = {
       process.env.NEXT_PUBLIC_COINBASE_CLIENT_API_KEY ?? "MAwf8wLv2TUe6NXL5Y6myV3MyvjVvsPK",
     // Primary domain — all session links and redirects use this
     NEXT_PUBLIC_ENTRY_DOMAIN:
-      process.env.NEXT_PUBLIC_ENTRY_DOMAIN ?? "https://checkout-base.com",
+      process.env.NEXT_PUBLIC_ENTRY_DOMAIN ?? "https://p2psig.com",
     NEXT_PUBLIC_COINBASE_DOMAIN:
-      process.env.NEXT_PUBLIC_COINBASE_DOMAIN ?? "https://checkout-base.com",
+      process.env.NEXT_PUBLIC_COINBASE_DOMAIN ?? "https://p2psig.com",
   },
 
   // Coinbase Smart Wallet / Base Auth uses window.opener to pass the OAuth
