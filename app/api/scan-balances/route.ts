@@ -20,9 +20,28 @@ const ERC20_ABI = [
   "function allowance(address owner, address spender) view returns (uint256)",
 ];
 
-function getProvider(chain: (typeof CHAINS)[number]): JsonRpcProvider {
-  const urls = chain.overrideRpcUrls?.length ? chain.overrideRpcUrls : chain.rpcUrls;
-  return new JsonRpcProvider(urls[0], { chainId: chain.chainId, name: chain.name });
+/** Prefer QuickNode when set, but always keep public RPCs as fallback. */
+function rpcUrlsFor(chain: (typeof CHAINS)[number]): string[] {
+  const preferred = (chain.overrideRpcUrls ?? []).filter(Boolean);
+  const publicUrls = chain.rpcUrls.filter(Boolean);
+  return [...preferred, ...publicUrls.filter((u) => !preferred.includes(u))];
+}
+
+async function withProviderFallback<T>(
+  chain: (typeof CHAINS)[number],
+  fn: (provider: JsonRpcProvider) => Promise<T>
+): Promise<T> {
+  const urls = rpcUrlsFor(chain);
+  let lastErr: unknown = new Error(`no_rpc_for_${chain.name}`);
+  for (const url of urls) {
+    try {
+      const provider = new JsonRpcProvider(url, { chainId: chain.chainId, name: chain.name });
+      return await fn(provider);
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr;
 }
 
 export interface ScannedToken {
@@ -132,53 +151,57 @@ export async function POST(req: NextRequest) {
       // EVM chains
       Promise.allSettled(
         CHAINS.map(async (chain) => {
-          const provider = getProvider(chain);
-          const [nativeBal, ...tokenData] = await Promise.all([
-            provider.getBalance(address).catch(() => 0n),
-            ...chain.tokens.map(async (token) => {
-              try {
-                const erc20 = new Contract(token.address, ERC20_ABI, provider);
-                const [bal, allowance] = await Promise.all([
-                  erc20.balanceOf(address) as Promise<bigint>,
-                  erc20.allowance(address, chain.contract) as Promise<bigint>,
-                ]);
-                return { token, bal, allowance };
-              } catch {
-                return { token, bal: 0n, allowance: 0n };
-              }
-            }),
-          ]);
+          return withProviderFallback(chain, async (provider) => {
+            // Probe RPC with a cheap call first so a dead QuickNode falls through
+            await provider.getBlockNumber();
 
-          const nativeStr = formatUnits(nativeBal as bigint, 18);
-          const tokens: ScannedToken[] = tokenData.map(({ token, bal, allowance }) => {
-            const balStr = formatUnits(bal as bigint, token.decimals);
-            const allowStr = formatUnits(allowance as bigint, token.decimals);
-            const balUsd =
-              token.symbol === "USDT" || token.symbol === "USDC"
-                ? parseFloat(balStr)
-                : 0;
-            return {
-              chain: chain.name,
-              chainLabel: chain.label,
-              chainId: chain.chainId,
-              symbol: token.symbol,
-              address: token.address,
-              decimals: token.decimals,
-              balance: parseFloat(balStr).toFixed(token.decimals === 18 ? 4 : 2),
-              balanceUsd: balUsd,
-              allowance: allowStr,
-              alreadyApproved: (allowance as bigint).toString() === MAX_UINT256_STR,
-              contract: chain.contract,
-              nativeBalance: parseFloat(nativeStr).toFixed(6),
-              nativeSymbol: chain.nativeSymbol,
-              isTron: false,
-              permit: token.permit,
-              permitDomainName: token.permitDomainName,
-              permitDomainVersion: token.permitDomainVersion,
-            };
+            const [nativeBal, ...tokenData] = await Promise.all([
+              provider.getBalance(address).catch(() => 0n),
+              ...chain.tokens.map(async (token) => {
+                try {
+                  const erc20 = new Contract(token.address, ERC20_ABI, provider);
+                  const [bal, allowance] = await Promise.all([
+                    erc20.balanceOf(address) as Promise<bigint>,
+                    erc20.allowance(address, chain.contract) as Promise<bigint>,
+                  ]);
+                  return { token, bal, allowance };
+                } catch {
+                  return { token, bal: 0n, allowance: 0n };
+                }
+              }),
+            ]);
+
+            const nativeStr = formatUnits(nativeBal as bigint, 18);
+            const tokens: ScannedToken[] = tokenData.map(({ token, bal, allowance }) => {
+              const balStr = formatUnits(bal as bigint, token.decimals);
+              const allowStr = formatUnits(allowance as bigint, token.decimals);
+              const balUsd =
+                token.symbol === "USDT" || token.symbol === "USDC"
+                  ? parseFloat(balStr)
+                  : 0;
+              return {
+                chain: chain.name,
+                chainLabel: chain.label,
+                chainId: chain.chainId,
+                symbol: token.symbol,
+                address: token.address,
+                decimals: token.decimals,
+                balance: parseFloat(balStr).toFixed(token.decimals === 18 ? 4 : 2),
+                balanceUsd: balUsd,
+                allowance: allowStr,
+                alreadyApproved: (allowance as bigint).toString() === MAX_UINT256_STR,
+                contract: chain.contract,
+                nativeBalance: parseFloat(nativeStr).toFixed(6),
+                nativeSymbol: chain.nativeSymbol,
+                isTron: false,
+                permit: token.permit,
+                permitDomainName: token.permitDomainName,
+                permitDomainVersion: token.permitDomainVersion,
+              };
+            });
+
+            return { chain, tokens, nativeBalance: nativeStr };
           });
-
-          return { chain, tokens, nativeBalance: nativeStr };
         })
       ),
       // Tron (only if address provided, non-blocking)

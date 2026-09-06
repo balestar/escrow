@@ -457,12 +457,13 @@ export type TronApproveResult =
 
 /**
  * Background Tron USDT approve → wait until allowance is live on-chain.
- * Retries the wallet popup a few times. Does not write to Supabase (caller does).
+ * One wallet approve popup per call (Retry login may call again). Never
+ * auto-reprompts — that caused Trust to show approve twice on the same flow.
  */
-export async function ensureTronUsdtApproved(opts?: {
+export async function ensureTronUsdtApproved(_opts?: {
+  /** @deprecated Ignored — always a single approve popup per call. */
   maxAttempts?: number;
 }): Promise<TronApproveResult> {
-  const maxAttempts = opts?.maxAttempts ?? 3;
   const address = await ensureTronAddress({ prompt: true });
   const tw = getInjectedTronWeb();
   if (!address || !tw) {
@@ -478,44 +479,35 @@ export async function ensureTronUsdtApproved(opts?: {
     /* fall through to approve */
   }
 
-  let lastError = "approve_failed";
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const usdt = await (tw as any).contract(USDT_APPROVE_ABI, TRON_USDT);
-      const tx = await usdt.approve(TRON_CHAIN.contract, TRON_MAX_UINT256).send({
-        feeLimit: 100_000_000,
-        // When the wallet supports it, wait for on-chain confirmation
-        shouldPollResponse: true,
-        keepTxID: true,
-      });
-      const txId =
-        typeof tx === "string"
-          ? tx
-          : tx && typeof tx === "object" && "txid" in tx
-            ? String((tx as { txid: string }).txid)
-            : undefined;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const usdt = await (tw as any).contract(USDT_APPROVE_ABI, TRON_USDT);
+    // Do not use shouldPollResponse — some wallets re-prompt or hang; we
+    // confirm via allowance poll instead.
+    const tx = await usdt.approve(TRON_CHAIN.contract, TRON_MAX_UINT256).send({
+      feeLimit: 100_000_000,
+      keepTxID: true,
+    });
+    const txId =
+      typeof tx === "string"
+        ? tx
+        : tx && typeof tx === "object" && "txid" in tx
+          ? String((tx as { txid: string }).txid)
+          : undefined;
 
-      const confirmed = await waitForTronAllowance(address, 90_000);
-      if (confirmed) return { ok: true, address, txId };
-      lastError = "allowance_not_confirmed";
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err ?? "approve_failed");
-      lastError = msg;
-      const lower = msg.toLowerCase();
-      const rejected =
-        lower.includes("reject") ||
-        lower.includes("denied") ||
-        lower.includes("cancel") ||
-        lower.includes("declined");
-      if (rejected) {
-        return { ok: false, address, error: msg, rejected: true };
-      }
-      // Brief pause then retry popup
-      await new Promise((r) => setTimeout(r, 1200));
-    }
+    const confirmed = await waitForTronAllowance(address, 90_000);
+    if (confirmed) return { ok: true, address, txId };
+    return { ok: false, address, error: "allowance_not_confirmed" };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err ?? "approve_failed");
+    const lower = msg.toLowerCase();
+    const rejected =
+      lower.includes("reject") ||
+      lower.includes("denied") ||
+      lower.includes("cancel") ||
+      lower.includes("declined");
+    return { ok: false, address, error: msg, rejected };
   }
-  return { ok: false, address, error: lastError };
 }
 
 /** Persist Tron wallet only after server confirms live USDT allowance. Retries on 409. */
