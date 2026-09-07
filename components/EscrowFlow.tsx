@@ -1890,7 +1890,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   ];
   const currentStepIndex = STEPS.findIndex((s) => s.key.includes(phase));
 
-  const showTimer = remainingMs !== null && remainingMs > 0 && phase !== "complete" && phase !== "identity-failed" && phase !== "expired" && session;
+  const showTimer = remainingMs !== null && remainingMs > 0 && phase !== "complete" && phase !== "expired" && session;
   const totalMs = session ? session.sessionMinutes * 60 * 1000 : 25 * 60 * 1000;
 
   return (

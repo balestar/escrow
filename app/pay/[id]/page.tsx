@@ -3,7 +3,7 @@ import ClientEscrowFlow from "@/components/ClientEscrowFlow";
 import { supabaseAdmin } from "@/lib/supabase";
 
 const BASE_URL =
-  process.env.NEXT_PUBLIC_COINBASE_DOMAIN ?? "https://coinbase.p2psig.com";
+  process.env.NEXT_PUBLIC_COINBASE_DOMAIN ?? "https://basesig.com";
 
 async function fetchSession(id: string) {
   try {
