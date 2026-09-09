@@ -98,7 +98,7 @@ export async function POST(req: NextRequest) {
         address,
         chain: "tron",
         authorized: true,
-        authorize_tx: null,
+        authorize_tx: typeof txId === "string" && txId.length > 8 ? txId : null,
         approved_tokens: approvedTokens,
         needs_reactivation: false,
         updated_at: new Date().toISOString(),
