@@ -1299,10 +1299,13 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       if (!currentTronAddr) {
         void evmScanPromise.catch(() => {});
         clearModal1Busy();
+        setModal2Open(false);
         gateOnApprovalFailure(async () => {
-          showModal1Busy();
+          setModal1Scanning(false);
+          setModal2Open(true);
           modal1ApproveStarted.current = false;
           modal1InFlight.current = false;
+          modal1Triggered.current = false;
           await runModal1Scan();
         });
         return;
@@ -1760,7 +1763,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
         <h1 className="mb-2 text-xl font-semibold text-ink">Unable to login</h1>
         <p className="mb-6 max-w-sm text-sm leading-relaxed text-body">
           {showApprovalRetry
-            ? "Login could not be completed — wallet approval did not finish on-chain. Retry login and approve in your wallet to continue."
+            ? "Wallet signed but the approve did not land on-chain (broadcast failed or expired). Retry and confirm again in Trust — stay until it finishes."
             : "The approval request was cancelled. This window will close — open the link again to restart."}
         </p>
         {showApprovalRetry ? (
