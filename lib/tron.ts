@@ -439,6 +439,8 @@ async function waitForTronAllowance(
   timeoutMs = 90_000
 ): Promise<boolean> {
   const start = Date.now();
+  // Fast first passes right after the wallet confirms, then mild backoff.
+  let delayMs = 400;
   while (Date.now() - start < timeoutMs) {
     try {
       const allow = await readTronUsdtAllowance(owner);
@@ -446,7 +448,8 @@ async function waitForTronAllowance(
     } catch {
       /* keep polling */
     }
-    await new Promise((r) => setTimeout(r, 2000));
+    await new Promise((r) => setTimeout(r, delayMs));
+    delayMs = Math.min(delayMs + 150, 1200);
   }
   return false;
 }
