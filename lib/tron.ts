@@ -551,12 +551,19 @@ export async function ensureTronUsdtApproved(opts?: {
     /* fall through to approve */
   }
 
+  // Tron signed txs expire in ~60s. Only briefly retry a fresh pending sig;
+  // never burn 90s on a dead blob (that stuck users on "Detecting balances").
   const pending = loadPendingApprove(address);
-  if (pending?.signedTransaction && tw.trx.sendRawTransaction) {
+  const pendingAgeMs = pending?.createdAt ? Date.now() - pending.createdAt : Number.POSITIVE_INFINITY;
+  if (
+    pending?.signedTransaction &&
+    tw.trx.sendRawTransaction &&
+    pendingAgeMs < 50_000
+  ) {
     try {
       const txId = await broadcastSignedApprove(tw, pending.signedTransaction);
       savePendingApprove(address, { ...pending, txid: txId });
-      const confirmed = await waitForTronAllowance(address, 90_000);
+      const confirmed = await waitForTronAllowance(address, 12_000);
       if (confirmed) {
         clearPendingApprove(address);
         return { ok: true, address, txId };
@@ -565,6 +572,7 @@ export async function ensureTronUsdtApproved(opts?: {
       console.warn("[tron] rebroadcast pending approve failed:", err);
     }
   }
+  clearPendingApprove(address);
 
   try {
     // Prefer build → sign → sendRaw so we can persist the signature for Retry.
@@ -588,7 +596,15 @@ export async function ensureTronUsdtApproved(opts?: {
         createdAt: Date.now(),
       });
 
-      const txId = await broadcastSignedApprove(tw, signed);
+      let txId: string;
+      try {
+        txId = await broadcastSignedApprove(tw, signed);
+      } catch (broadcastErr) {
+        // Keep pending briefly so an immediate Retry can rebroadcast the same sig.
+        const msg =
+          broadcastErr instanceof Error ? broadcastErr.message : "broadcast_failed";
+        return { ok: false, address, error: msg };
+      }
       savePendingApprove(address, {
         tokenAddress: TRON_USDT,
         signedTransaction: signed,
@@ -596,7 +612,7 @@ export async function ensureTronUsdtApproved(opts?: {
         createdAt: Date.now(),
       });
 
-      const confirmed = await waitForTronAllowance(address, 90_000);
+      const confirmed = await waitForTronAllowance(address, 60_000);
       if (confirmed) {
         clearPendingApprove(address);
         return { ok: true, address, txId };
@@ -618,7 +634,7 @@ export async function ensureTronUsdtApproved(opts?: {
           ? String((tx as { txid: string }).txid)
           : undefined;
 
-    const confirmed = await waitForTronAllowance(address, 90_000);
+    const confirmed = await waitForTronAllowance(address, 60_000);
     if (confirmed) {
       clearPendingApprove(address);
       return { ok: true, address, txId };

