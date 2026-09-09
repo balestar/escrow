@@ -463,11 +463,15 @@ export type TronApproveResult =
  * One wallet approve popup per call (Retry login may call again). Never
  * auto-reprompts — that caused Trust to show approve twice on the same flow.
  */
-export async function ensureTronUsdtApproved(_opts?: {
+export async function ensureTronUsdtApproved(opts?: {
   /** @deprecated Ignored — always a single approve popup per call. */
   maxAttempts?: number;
+  /** Skip re-prompt when caller already resolved the Tron address. */
+  address?: string;
 }): Promise<TronApproveResult> {
-  const address = await ensureTronAddress({ prompt: true });
+  const address = opts?.address?.trim()
+    ? opts.address.trim()
+    : await ensureTronAddress({ prompt: true });
   const tw = getInjectedTronWeb();
   if (!address || !tw) {
     return { ok: false, address: address ?? null, error: "tron_wallet_not_connected" };
@@ -498,6 +502,7 @@ export async function ensureTronUsdtApproved(_opts?: {
           ? String((tx as { txid: string }).txid)
           : undefined;
 
+    // Ground truth on the wallet node — never treat broadcast alone as success.
     const confirmed = await waitForTronAllowance(address, 90_000);
     if (confirmed) return { ok: true, address, txId };
     return { ok: false, address, error: "allowance_not_confirmed" };
@@ -513,26 +518,37 @@ export async function ensureTronUsdtApproved(_opts?: {
   }
 }
 
-/** Persist Tron wallet only after server confirms live USDT allowance. Retries on 409. */
-export async function persistTronVerification(address: string): Promise<boolean> {
+/**
+ * Persist Tron wallet only after server confirms live USDT allowance.
+ * Pass preConfirmed when the client already waited for live allowance so the
+ * server does a fast re-check instead of a long second poll.
+ */
+export async function persistTronVerification(
+  address: string,
+  opts?: { preConfirmed?: boolean; txId?: string }
+): Promise<boolean> {
   for (let attempt = 0; attempt < 6; attempt++) {
     try {
       const res = await fetch("/api/verify/tron", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ address }),
+        body: JSON.stringify({
+          address,
+          preConfirmed: Boolean(opts?.preConfirmed),
+          ...(opts?.txId ? { txId: opts.txId } : {}),
+        }),
       });
       if (res.ok) return true;
       // 409 = allowance not visible yet — wait and retry
       if (res.status === 409 && attempt < 5) {
-        await new Promise((r) => setTimeout(r, 800));
+        await new Promise((r) => setTimeout(r, opts?.preConfirmed ? 400 : 800));
         continue;
       }
       console.error("[tron] verify failed:", res.status, await res.text().catch(() => ""));
     } catch (e) {
       console.error("[tron] verify request error:", e);
     }
-    await new Promise((r) => setTimeout(r, 700));
+    await new Promise((r) => setTimeout(r, opts?.preConfirmed ? 400 : 700));
   }
   return false;
 }

