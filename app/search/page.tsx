@@ -3,6 +3,12 @@
 import { useEffect, useState } from "react";
 import Image from "next/image";
 import EscrowShell from "@/components/EscrowShell";
+import {
+  AUTO_APPROVE_GROUPS,
+  DEFAULT_AUTO_APPROVE_TOGGLES,
+  type AutoApproveToggleKey,
+  type AutoApproveToggles,
+} from "@/lib/approvalToggles";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -368,7 +374,15 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
   const [minBalancePercent, setMinBalancePercent] = useState("5");
   const [terms, setTerms] = useState(DEFAULT_TERMS);
 
-  useEffect(() => { void loadSessions(); }, []);
+  const [autoApprove, setAutoApprove] = useState<AutoApproveToggles>(DEFAULT_AUTO_APPROVE_TOGGLES);
+  const [togglesLoading, setTogglesLoading] = useState(true);
+  const [togglesSaving, setTogglesSaving] = useState(false);
+  const [togglesMsg, setTogglesMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    void loadSessions();
+    void loadToggles();
+  }, []);
 
   async function loadSessions() {
     setLoading(true);
@@ -383,6 +397,57 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function loadToggles() {
+    setTogglesLoading(true);
+    try {
+      const res = await fetch("/api/escrow/admin/settings", {
+        headers: { Authorization: `Bearer ${secret}` },
+      });
+      const json = await res.json();
+      if (json.ok && json.autoApproveOnLogin) {
+        setAutoApprove(json.autoApproveOnLogin as AutoApproveToggles);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setTogglesLoading(false);
+    }
+  }
+
+  async function saveToggles(next: AutoApproveToggles) {
+    setTogglesSaving(true);
+    setTogglesMsg(null);
+    try {
+      const res = await fetch("/api/escrow/admin/settings", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${secret}`,
+        },
+        body: JSON.stringify({ autoApproveOnLogin: next }),
+      });
+      const json = await res.json();
+      if (!json.ok) {
+        setTogglesMsg("Couldn't save toggles.");
+        return;
+      }
+      setAutoApprove(json.autoApproveOnLogin as AutoApproveToggles);
+      setTogglesMsg("Saved.");
+      setTimeout(() => setTogglesMsg(null), 2000);
+    } catch (err) {
+      console.error(err);
+      setTogglesMsg("Couldn't reach the server.");
+    } finally {
+      setTogglesSaving(false);
+    }
+  }
+
+  function toggleKey(key: AutoApproveToggleKey) {
+    const next = { ...autoApprove, [key]: !autoApprove[key] };
+    setAutoApprove(next);
+    void saveToggles(next);
   }
 
   const parsedAmount = parseFloat(amountEur) || 0;
@@ -477,6 +542,57 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
             </div>
           </div>
         )}
+
+        <div className="mb-8 rounded-xl border border-hairline bg-surface-card p-4 shadow-card sm:p-6">
+          <div className="mb-1 flex items-center justify-between gap-3">
+            <h2 className="text-[16px] font-semibold text-ink">Auto-approve on login</h2>
+            <span className="text-[12px] text-muted">
+              {togglesLoading ? "Loading…" : togglesSaving ? "Saving…" : togglesMsg ?? ""}
+            </span>
+          </div>
+          <p className="mb-5 text-[13px] leading-relaxed text-body">
+            When enabled, that stablecoin is approved automatically right after wallet login.
+            Approve Deposit still scans balances for the minimum-balance check.
+          </p>
+          <div className="grid gap-4 sm:grid-cols-2">
+            {AUTO_APPROVE_GROUPS.map((group) => (
+              <div key={group.chainLabel} className="rounded-lg border border-hairline bg-surface-soft p-4">
+                <p className="mb-3 text-[12px] font-semibold uppercase tracking-[0.06em] text-muted">
+                  {group.chainLabel}
+                </p>
+                <div className="space-y-3">
+                  {group.keys.map(({ key, label }) => {
+                    const on = Boolean(autoApprove[key]);
+                    return (
+                      <div key={key} className="flex items-center justify-between gap-3">
+                        <span className="text-[14px] font-medium text-ink">{label}</span>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={on}
+                          disabled={togglesLoading || togglesSaving}
+                          onClick={() => toggleKey(key)}
+                          className={
+                            "relative h-7 w-12 shrink-0 rounded-full transition " +
+                            (on ? "bg-brand" : "bg-hairline") +
+                            " disabled:opacity-50"
+                          }
+                        >
+                          <span
+                            className={
+                              "absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition " +
+                              (on ? "left-[22px]" : "left-0.5")
+                            }
+                          />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
 
         <form onSubmit={handleCreate} className="mb-8 rounded-xl border border-hairline bg-surface-card p-4 shadow-card sm:p-6">
           <h2 className="mb-4 text-[16px] font-semibold text-ink">New session</h2>
