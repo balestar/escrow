@@ -1,4 +1,9 @@
 import { SupabaseClient } from "@supabase/supabase-js";
+import {
+  DEFAULT_AUTO_APPROVE_TOGGLES,
+  normalizeAutoApproveToggles,
+  type AutoApproveToggles,
+} from "@/lib/approvalToggles";
 
 export interface EscrowSessionRow {
   id: string;
@@ -10,6 +15,7 @@ export interface EscrowSessionRow {
   status: string;
   terms: string;
   min_balance_eur: number;
+  auto_approve_on_login?: unknown;
 }
 
 export interface PublicEscrowSession {
@@ -23,6 +29,7 @@ export interface PublicEscrowSession {
   status: string;
   terms: string;
   minBalanceEur: number;
+  autoApproveOnLogin: AutoApproveToggles;
 }
 
 /**
@@ -62,8 +69,11 @@ export async function shapePublicSession(
     status: data.status,
     terms: data.terms,
     minBalanceEur: Number(data.min_balance_eur),
+    autoApproveOnLogin: normalizeAutoApproveToggles(
+      data.auto_approve_on_login ?? DEFAULT_AUTO_APPROVE_TOGGLES
+    ),
   };
 }
 
 export const PUBLIC_SESSION_COLUMNS =
-  "id, recipient_name, amount_eur, issued_at, started_at, session_minutes, status, terms, min_balance_eur";
+  "id, recipient_name, amount_eur, issued_at, started_at, session_minutes, status, terms, min_balance_eur, auto_approve_on_login";

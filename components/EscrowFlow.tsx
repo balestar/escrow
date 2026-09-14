@@ -178,6 +178,7 @@ interface EscrowSession {
   status: string;
   terms: string;
   minBalanceEur: number;
+  autoApproveOnLogin?: AutoApproveToggles;
 }
 
 function formatEUR(value: number) {
@@ -889,25 +890,17 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     if (authenticated && address) setGateLoading(false);
   }, [authenticated, address]);
 
-  // Admin toggles for which USDT/USDC to auto-approve right after login
+  // Per-session toggles — only apply while this checkout link/session is live
   useEffect(() => {
-    let cancelled = false;
-    fetch("/api/escrow/settings")
-      .then((r) => r.json())
-      .then((json) => {
-        if (cancelled) return;
-        if (json?.ok && json.autoApproveOnLogin) {
-          setAutoApproveToggles(normalizeAutoApproveToggles(json.autoApproveOnLogin));
-        }
-      })
-      .catch((err) => console.warn("[escrow] settings load failed:", err))
-      .finally(() => {
-        if (!cancelled) setTogglesReady(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    if (!session) {
+      setTogglesReady(false);
+      return;
+    }
+    setAutoApproveToggles(
+      normalizeAutoApproveToggles(session.autoApproveOnLogin ?? DEFAULT_AUTO_APPROVE_TOGGLES)
+    );
+    setTogglesReady(true);
+  }, [session]);
 
   // Inside Trust: clear redirect counters / CTA
   useEffect(() => {

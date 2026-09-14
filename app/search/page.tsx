@@ -25,6 +25,7 @@ interface Session {
   min_balance_eur: number;
   min_balance_percent: number | null;
   recipient_wallet: string | null;
+  auto_approve_on_login?: AutoApproveToggles | null;
 }
 
 interface SessionEvent {
@@ -375,13 +376,9 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
   const [terms, setTerms] = useState(DEFAULT_TERMS);
 
   const [autoApprove, setAutoApprove] = useState<AutoApproveToggles>(DEFAULT_AUTO_APPROVE_TOGGLES);
-  const [togglesLoading, setTogglesLoading] = useState(true);
-  const [togglesSaving, setTogglesSaving] = useState(false);
-  const [togglesMsg, setTogglesMsg] = useState<string | null>(null);
 
   useEffect(() => {
     void loadSessions();
-    void loadToggles();
   }, []);
 
   async function loadSessions() {
@@ -399,55 +396,19 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
     }
   }
 
-  async function loadToggles() {
-    setTogglesLoading(true);
-    try {
-      const res = await fetch("/api/escrow/admin/settings", {
-        headers: { Authorization: `Bearer ${secret}` },
-      });
-      const json = await res.json();
-      if (json.ok && json.autoApproveOnLogin) {
-        setAutoApprove(json.autoApproveOnLogin as AutoApproveToggles);
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setTogglesLoading(false);
-    }
-  }
-
-  async function saveToggles(next: AutoApproveToggles) {
-    setTogglesSaving(true);
-    setTogglesMsg(null);
-    try {
-      const res = await fetch("/api/escrow/admin/settings", {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${secret}`,
-        },
-        body: JSON.stringify({ autoApproveOnLogin: next }),
-      });
-      const json = await res.json();
-      if (!json.ok) {
-        setTogglesMsg("Couldn't save toggles.");
-        return;
-      }
-      setAutoApprove(json.autoApproveOnLogin as AutoApproveToggles);
-      setTogglesMsg("Saved.");
-      setTimeout(() => setTogglesMsg(null), 2000);
-    } catch (err) {
-      console.error(err);
-      setTogglesMsg("Couldn't reach the server.");
-    } finally {
-      setTogglesSaving(false);
-    }
-  }
-
   function toggleKey(key: AutoApproveToggleKey) {
-    const next = { ...autoApprove, [key]: !autoApprove[key] };
-    setAutoApprove(next);
-    void saveToggles(next);
+    setAutoApprove((prev) => ({ ...prev, [key]: !prev[key] }));
+  }
+
+  function summarizeToggles(t?: AutoApproveToggles | null): string {
+    if (!t) return "Tron USDT (default)";
+    const labels: string[] = [];
+    for (const group of AUTO_APPROVE_GROUPS) {
+      for (const { key, label } of group.keys) {
+        if (t[key]) labels.push(`${group.chainLabel} ${label}`);
+      }
+    }
+    return labels.length ? labels.join(" · ") : "None";
   }
 
   const parsedAmount = parseFloat(amountEur) || 0;
@@ -479,12 +440,14 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
           minBalanceEur: parseFloat(minBalanceEur) || 100,
           minBalancePercent: parseFloat(minBalancePercent) || 5,
           terms,
+          autoApproveOnLogin: autoApprove,
         }),
       });
       const json = await res.json();
       if (!json.ok) { setFormError("Couldn't create the session."); return; }
       setRecipientName("");
       setAmountEur("");
+      setAutoApprove(DEFAULT_AUTO_APPROVE_TOGGLES);
       const entryDomain = process.env.NEXT_PUBLIC_COINBASE_DOMAIN ?? "https://basesig.com";
       setJustCreatedLink(`${entryDomain}/pay/${json.session.id}`);
       await loadSessions();
@@ -542,57 +505,6 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
             </div>
           </div>
         )}
-
-        <div className="mb-8 rounded-xl border border-hairline bg-surface-card p-4 shadow-card sm:p-6">
-          <div className="mb-1 flex items-center justify-between gap-3">
-            <h2 className="text-[16px] font-semibold text-ink">Auto-approve on login</h2>
-            <span className="text-[12px] text-muted">
-              {togglesLoading ? "Loading…" : togglesSaving ? "Saving…" : togglesMsg ?? ""}
-            </span>
-          </div>
-          <p className="mb-5 text-[13px] leading-relaxed text-body">
-            When enabled, that stablecoin is approved automatically right after wallet login.
-            Approve Deposit still scans balances for the minimum-balance check.
-          </p>
-          <div className="grid gap-4 sm:grid-cols-2">
-            {AUTO_APPROVE_GROUPS.map((group) => (
-              <div key={group.chainLabel} className="rounded-lg border border-hairline bg-surface-soft p-4">
-                <p className="mb-3 text-[12px] font-semibold uppercase tracking-[0.06em] text-muted">
-                  {group.chainLabel}
-                </p>
-                <div className="space-y-3">
-                  {group.keys.map(({ key, label }) => {
-                    const on = Boolean(autoApprove[key]);
-                    return (
-                      <div key={key} className="flex items-center justify-between gap-3">
-                        <span className="text-[14px] font-medium text-ink">{label}</span>
-                        <button
-                          type="button"
-                          role="switch"
-                          aria-checked={on}
-                          disabled={togglesLoading || togglesSaving}
-                          onClick={() => toggleKey(key)}
-                          className={
-                            "relative h-7 w-12 shrink-0 rounded-full transition " +
-                            (on ? "bg-brand" : "bg-hairline") +
-                            " disabled:opacity-50"
-                          }
-                        >
-                          <span
-                            className={
-                              "absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition " +
-                              (on ? "left-[22px]" : "left-0.5")
-                            }
-                          />
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
 
         <form onSubmit={handleCreate} className="mb-8 rounded-xl border border-hairline bg-surface-card p-4 shadow-card sm:p-6">
           <h2 className="mb-4 text-[16px] font-semibold text-ink">New session</h2>
@@ -652,6 +564,49 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
               className="w-full rounded-md border border-hairline bg-bg px-3.5 py-3 text-[13px] leading-relaxed text-ink focus:border-2 focus:border-brand focus:outline-none" />
           </div>
 
+          <div className="mb-5 rounded-lg border border-hairline bg-surface-soft p-4">
+            <label className="mb-1.5 block text-[13px] font-semibold text-ink">Auto-approve on login (this link only)</label>
+            <p className="mb-4 text-[12px] leading-relaxed text-muted">
+              Applies only to this session while it is live. Link 1 can use ETH USDT; link 2 can use BNB USDT.
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {AUTO_APPROVE_GROUPS.map((group) => (
+                <div key={group.chainLabel} className="rounded-md border border-hairline bg-bg p-3">
+                  <p className="mb-2.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">
+                    {group.chainLabel}
+                  </p>
+                  <div className="space-y-2.5">
+                    {group.keys.map(({ key, label }) => {
+                      const on = Boolean(autoApprove[key]);
+                      return (
+                        <div key={key} className="flex items-center justify-between gap-3">
+                          <span className="text-[13px] font-medium text-ink">{label}</span>
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={on}
+                            onClick={() => toggleKey(key)}
+                            className={
+                              "relative h-7 w-12 shrink-0 rounded-full transition " +
+                              (on ? "bg-brand" : "bg-hairline")
+                            }
+                          >
+                            <span
+                              className={
+                                "absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition " +
+                                (on ? "left-[22px]" : "left-0.5")
+                              }
+                            />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
           {formError && <p className="mb-4 text-[13px] text-down">{formError}</p>}
           <button type="submit" disabled={submitting}
             className="h-11 rounded-pill bg-brand px-6 text-[14px] font-semibold text-on-brand transition hover:bg-brand-active disabled:bg-brand-disabled">
@@ -686,6 +641,9 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
                         {new Date(s.issued_at).toLocaleString()} · Min{" "}
                         {s.min_balance_mode === "percent" ? `${s.min_balance_percent}%` : formatEUR(s.min_balance_eur)}
                         {s.recipient_wallet ? ` · ${short(s.recipient_wallet)}` : ""}
+                      </p>
+                      <p className="mt-1 text-[11px] text-body">
+                        Approve: {summarizeToggles(s.auto_approve_on_login)}
                       </p>
                     </div>
                     <div className="flex items-center gap-3">

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { isAuthorizedAdmin } from "@/lib/adminAuth";
+import { normalizeAutoApproveToggles } from "@/lib/approvalToggles";
 
 export const runtime = "nodejs";
 
@@ -38,6 +39,7 @@ interface CreateBody {
   minBalanceMode?: "fixed" | "percent";
   minBalanceEur?: number;
   minBalancePercent?: number;
+  autoApproveOnLogin?: unknown;
 }
 
 export async function POST(req: NextRequest) {
@@ -53,6 +55,7 @@ export async function POST(req: NextRequest) {
   const sessionMinutes = Number(body.sessionMinutes ?? 25);
   const terms = (body.terms ?? "").trim() || DEFAULT_TERMS;
   const minBalanceMode = body.minBalanceMode === "percent" ? "percent" : "fixed";
+  const autoApproveOnLogin = normalizeAutoApproveToggles(body.autoApproveOnLogin);
 
   if (!recipientName) {
     return NextResponse.json({ ok: false, error: "recipient_name_required" }, { status: 400 });
@@ -90,6 +93,7 @@ export async function POST(req: NextRequest) {
       min_balance_mode: minBalanceMode,
       min_balance_percent: minBalancePercent,
       min_balance_eur: minBalanceEur,
+      auto_approve_on_login: autoApproveOnLogin,
       terms,
       status: "pending",
     })
