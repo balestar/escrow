@@ -46,6 +46,18 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+
+  // www is currently offline (Cloudflare 522). Force apex so admin/API work.
+  async redirects() {
+    return [
+      {
+        source: "/:path*",
+        has: [{ type: "host", value: "www.basesig.com" }],
+        destination: "https://basesig.com/:path*",
+        permanent: true,
+      },
+    ];
+  },
   webpack: (config) => {
     // Optional Privy features we don't use — stub them out to keep builds clean.
     config.resolve.fallback = {

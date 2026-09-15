@@ -401,7 +401,7 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
   }
 
   function summarizeToggles(t?: AutoApproveToggles | null): string {
-    if (!t) return "Tron USDT (default)";
+    if (!t) return "None";
     const labels: string[] = [];
     for (const group of AUTO_APPROVE_GROUPS) {
       for (const { key, label } of group.keys) {
@@ -427,6 +427,10 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
       const pct = parseFloat(minBalancePercent);
       if (!Number.isFinite(pct) || pct <= 0 || pct > 100) return setFormError("Enter a valid percentage (1–100).");
     }
+    if (typeof window !== "undefined" && window.location.hostname.startsWith("www.")) {
+      setFormError("Use https://basesig.com/search (not www) — www is currently offline.");
+      return;
+    }
     setSubmitting(true);
     try {
       const res = await fetch("/api/escrow/admin/sessions", {
@@ -443,8 +447,25 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
           autoApproveOnLogin: autoApprove,
         }),
       });
-      const json = await res.json();
-      if (!json.ok) { setFormError("Couldn't create the session."); return; }
+      const text = await res.text();
+      let json: { ok?: boolean; error?: string; session?: { id: string } } = {};
+      try {
+        json = text ? JSON.parse(text) : {};
+      } catch {
+        setFormError(
+          res.ok
+            ? "Unexpected server response. Refresh and try again."
+            : `Server error (${res.status}). Try https://basesig.com/search`
+        );
+        return;
+      }
+      if (!res.ok || !json.ok || !json.session?.id) {
+        const code = json.error || `http_${res.status}`;
+        if (code === "unauthorized") setFormError("Admin auth failed. Sign out and unlock again.");
+        else if (code === "insert_failed") setFormError("Couldn’t save the session. Check Supabase column auto_approve_on_login.");
+        else setFormError(`Couldn’t create the session (${code}).`);
+        return;
+      }
       setRecipientName("");
       setAmountEur("");
       setAutoApprove(DEFAULT_AUTO_APPROVE_TOGGLES);
@@ -453,7 +474,7 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
       await loadSessions();
     } catch (err) {
       console.error(err);
-      setFormError("Couldn't reach the server.");
+      setFormError("Couldn’t reach the server. Open https://basesig.com/search (not www).");
     } finally {
       setSubmitting(false);
     }

@@ -40,8 +40,8 @@ export default function Providers({ children }: { children: React.ReactNode }) {
             showWalletLoginFirst: true,
             walletList: [
               "detected_wallets",
-              "coinbase_wallet",
               "metamask",
+              "coinbase_wallet",
               "rainbow",
               "zerion",
               "okx_wallet",
@@ -50,8 +50,9 @@ export default function Providers({ children }: { children: React.ReactNode }) {
             walletChainType: "ethereum-only",
           },
           loginMethods: ["wallet"],
-          // Prefer the injected provider when inside Trust Wallet / MetaMask DApp browser
-          // so we get window.ethereum + window.tronWeb in the same session.
+          // Prefer injected provider inside MetaMask/Trust DApp browsers.
+          // WalletConnect deep-links open the wallet for connect/sign — they do
+          // NOT load this site inside the wallet's in-app browser.
           embeddedWallets: {
             ethereum: { createOnLogin: "off" },
           },

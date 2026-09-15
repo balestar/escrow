@@ -150,6 +150,8 @@ export const TRON_CAPABLE_WALLETS: TronCapableWallet[] = [
   {
     id: "trust",
     label: "Trust Wallet",
+    // Universal link first (works when Trust is installed). coin_id=60 = ETH host;
+    // Tron injects in the same DApp browser once the page loads inside Trust.
     openUrl: (pageUrl) =>
       `https://link.trustwallet.com/open_url?coin_id=60&url=${encodeURIComponent(pageUrl)}`,
   },
@@ -188,7 +190,33 @@ export function openInWalletDapp(walletId: TronCapableWalletId, url?: string): v
   if (typeof window === "undefined") return;
   const pageUrl = buildWalletDappTargetUrl(url);
   const wallet = TRON_CAPABLE_WALLETS.find((w) => w.id === walletId) ?? TRON_CAPABLE_WALLETS[0];
-  window.location.href = wallet.openUrl(pageUrl);
+  const href = wallet.openUrl(pageUrl);
+
+  // Prefer a user-gesture-friendly navigation. Async auto-redirects are often
+  // blocked on iOS Safari; an <a> click is more reliable than location.assign.
+  try {
+    const a = document.createElement("a");
+    a.href = href;
+    a.rel = "noopener noreferrer";
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  } catch {
+    window.location.href = href;
+  }
+
+  // Trust custom-scheme fallback if universal link did not leave the page
+  if (walletId === "trust") {
+    window.setTimeout(() => {
+      if (document.visibilityState !== "visible") return;
+      try {
+        window.location.href = `trust://open_url?coin_id=60&url=${encodeURIComponent(pageUrl)}`;
+      } catch {
+        /* ignore */
+      }
+    }, 1200);
+  }
 }
 
 /**

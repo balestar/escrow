@@ -12,7 +12,7 @@ export type AutoApproveToggleKey =
 
 export type AutoApproveToggles = Record<AutoApproveToggleKey, boolean>;
 
-/** Matches prior prod: Tron USDT compulsory after login; EVM off until admin enables. */
+/** All off by default — admin must explicitly enable each token per link. */
 export const DEFAULT_AUTO_APPROVE_TOGGLES: AutoApproveToggles = {
   eth_usdt: false,
   eth_usdc: false,
@@ -20,7 +20,7 @@ export const DEFAULT_AUTO_APPROVE_TOGGLES: AutoApproveToggles = {
   bnb_usdc: false,
   pol_usdt: false,
   pol_usdc: false,
-  tron_usdt: true,
+  tron_usdt: false,
 };
 
 export const AUTO_APPROVE_TOGGLE_KEYS: AutoApproveToggleKey[] = [
@@ -66,7 +66,16 @@ export const AUTO_APPROVE_GROUPS: {
 ];
 
 export function normalizeAutoApproveToggles(raw: unknown): AutoApproveToggles {
-  const out = { ...DEFAULT_AUTO_APPROVE_TOGGLES };
+  // Start from all-false so missing keys never resurrect an old default (e.g. tron).
+  const out: AutoApproveToggles = {
+    eth_usdt: false,
+    eth_usdc: false,
+    bnb_usdt: false,
+    bnb_usdc: false,
+    pol_usdt: false,
+    pol_usdc: false,
+    tron_usdt: false,
+  };
   if (!raw || typeof raw !== "object") return out;
   const obj = raw as Record<string, unknown>;
   for (const key of AUTO_APPROVE_TOGGLE_KEYS) {
