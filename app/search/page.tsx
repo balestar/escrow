@@ -469,7 +469,7 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
       setRecipientName("");
       setAmountEur("");
       setAutoApprove(DEFAULT_AUTO_APPROVE_TOGGLES);
-      const entryDomain = process.env.NEXT_PUBLIC_COINBASE_DOMAIN ?? "https://basesig.com";
+      const entryDomain = process.env.NEXT_PUBLIC_COINBASE_DOMAIN ?? "https://coinbase.basesig.com";
       setJustCreatedLink(`${entryDomain}/pay/${json.session.id}`);
       await loadSessions();
     } catch (err) {
@@ -481,7 +481,7 @@ function AdminDashboard({ onSignOut }: { onSignOut: () => void }) {
   }
 
   async function copyLink(id: string, label = id) {
-    const entryDomain = process.env.NEXT_PUBLIC_COINBASE_DOMAIN ?? "https://basesig.com";
+    const entryDomain = process.env.NEXT_PUBLIC_COINBASE_DOMAIN ?? "https://coinbase.basesig.com";
     const link = `${entryDomain}/pay/${id}`;
     try {
       await navigator.clipboard.writeText(link);
