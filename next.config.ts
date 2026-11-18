@@ -17,11 +17,11 @@ const nextConfig: NextConfig = {
     // CDP Client API key — domain-restricted in Coinbase dashboard
     NEXT_PUBLIC_COINBASE_CLIENT_API_KEY:
       process.env.NEXT_PUBLIC_COINBASE_CLIENT_API_KEY ?? "MAwf8wLv2TUe6NXL5Y6myV3MyvjVvsPK",
-    // Primary domain — all session links and redirects use this
+    // Apex for admin/search; session /pay links use pay-cb.com
     NEXT_PUBLIC_ENTRY_DOMAIN:
       process.env.NEXT_PUBLIC_ENTRY_DOMAIN ?? "https://basesig.com",
     NEXT_PUBLIC_COINBASE_DOMAIN:
-      process.env.NEXT_PUBLIC_COINBASE_DOMAIN ?? "https://basesig.com",
+      process.env.NEXT_PUBLIC_COINBASE_DOMAIN ?? "https://pay-cb.com",
   },
 
   // Coinbase Smart Wallet / Base Auth uses window.opener to pass the OAuth
